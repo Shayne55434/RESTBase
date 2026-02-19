@@ -1,86 +1,76 @@
-<#
-   .SYNOPSIS
-      Start Essbase Application.
-   .DESCRIPTION
-      Start Essbase Application.
-   .PARAMETER RestURL <string>
-      The base URL for the REST API interface. Example: 'https://your.domain.com/essbase/rest/v1'
-   .PARAMETER Application <string>
-      The name of the Application to be started.
-   .PARAMETER WebSession <WebRequestSession>
-      A Web Request Session that contains authentication and header information for the connection.
-   .PARAMETER Credentials <pscredential>
-      PowerShell credentials that contain authentication information for the connection.
-   .INPUTS
-      System.String[]
-   .OUTPUTS
-      None
-   .EXAMPLE
-      Start-EssbaseApplication -RestURL 'https://your.domain.com/essbase/rest/v1' -Application 'MyApp' -WebSession $MyWebSession
-   .EXAMPLE
-      'MyApp', 'MyOtherApp' | Start-EssbaseApplication -RestURL 'https://your.domain.com/essbase/rest/v1' -Credential $MyCredentials
-   .NOTES
-      Created by : Shayne Scovill
-   .LINK
-      https://github.com/Shayne55434/RESTBase
-#>
 function Start-EssbaseApplication {
+   <#
+      .SYNOPSIS
+         Start an Essbase application.
+      .DESCRIPTION
+         Starts one or more Essbase applications on the server.
+      .PARAMETER RestUrl
+         The base URL for the REST API (e.g., 'https://your.domain.com/essbase/rest/v1').
+      .PARAMETER Name
+         Application name(s) to start. Supports pipeline input.
+      .PARAMETER Credential
+         PowerShell credential object for authentication.
+      .PARAMETER AuthToken
+         Bearer token for authentication.
+      .PARAMETER WebSession
+         Existing web session for authentication.
+      .PARAMETER Username
+         Username for interactive credential prompt.
+      .INPUTS
+         System.String
+      .OUTPUTS
+         None
+      .EXAMPLE
+         Start-EssbaseApplication -RestUrl 'https://your.domain.com/essbase/rest/v1' -Name 'MyApp' -Credential $Cred
+      .EXAMPLE
+         'App1', 'App2' | Start-EssbaseApplication -RestUrl 'https://your.domain.com/essbase/rest/v1' -WebSession $Session
+      .NOTES
+         Created by: Shayne Scovill
+      .LINK
+         https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-applications-application-actions-post.html
+   #>
+   
    [CmdletBinding()]
-   Param(
-      [Parameter(Mandatory, Position=0)]
+   param(
+      [Parameter(Mandatory, Position = 0)]
       [ValidateNotNullOrEmpty()]
-      [string]$RestURL,
+      [string]$RestUrl,
       
       [Parameter(Mandatory, ValueFromPipeline)]
       [ValidateNotNullOrEmpty()]
-      [string[]]$Application,
+      [string[]]$Name,
       
-      [Parameter(Mandatory, ParameterSetName='WebSession')]
-      [ValidateNotNullOrEmpty()]
-      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
-      
-      [Parameter(Mandatory, ParameterSetName='Credential')]
+      [Parameter(Mandatory, ParameterSetName = 'Credential')]
       [ValidateNotNullOrEmpty()]
       [pscredential]$Credential,
       
-      [Parameter(Mandatory, ParameterSetName='Username')]
+      [Parameter(Mandatory, ParameterSetName = 'AuthToken')]
+      [ValidateNotNullOrEmpty()]
+      [string]$AuthToken,
+      
+      [Parameter(Mandatory, ParameterSetName = 'WebSession')]
+      [ValidateNotNullOrEmpty()]
+      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+      
+      [Parameter(Mandatory, ParameterSetName = 'Username')]
       [ValidateNotNullOrEmpty()]
       [string]$Username
    )
    
    begin {
-      # Decipher which authentication type is being used
-      [hashtable]$htbAuthentication = @{}
-      if ($Credential) {
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided credentials.'
-      }
-      elseif ($WebSession) {
-         $htbAuthentication.Add('WebSession', $WebSession)
-         Write-Verbose 'Using provided Web Session variable.'
-      }
-      else {
-         [pscredential]$Credential = Get-Credential -Message 'Please enter your Essbase password' -UserName $Username
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided username and password.'
-      }
+      $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
    }
    process {
-      foreach ($application in $Application) {
-         [hashtable]$htbInvokeParameters = @{
-            Method = 'Put'
-            Uri = "$RestURL/applications/$($application)?action=start"
-            Headers = @{
-               accept = 'Application/JSON'
-            }
-         } + $htbAuthentication
+      foreach ($ApplicationName in $Name) {
+         $Uri = "$RestUrl/applications/$ApplicationName`?action=start"
          
          try {
-            Write-Verbose "Starting application $application."
-            $null = Invoke-RestMethod @htbInvokeParameters
+            Write-Verbose "Starting application: $ApplicationName"
+            $null = Invoke-EssbaseRequest -Method Put -Uri $Uri @AuthParams
+            Write-Information "Application '$ApplicationName' start request submitted successfully."
          }
          catch {
-            Write-Error "Unable to start '$application'. $($_)"
+            Write-Error "Failed to start application '$ApplicationName': $_"
          }
       }
    }

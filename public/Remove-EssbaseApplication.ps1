@@ -1,98 +1,89 @@
-<#
-   .SYNOPSIS
-      Delete an Application.
-   .DESCRIPTION
-      Delete an Application.
-   .PARAMETER RestURL <string>
-      The base URL for the REST API interface. Example: 'https://your.domain.com/essbase/rest/v1'
-   .PARAMETER Name <string[]>
-      The name of the Application to be deleted. Accepts value(s) from Pipeline.
-   .PARAMETER WebSession <WebRequestSession>
-      A Web Request Session that contains authentication and header information for the connection.
-   .PARAMETER Credentials <pscredential>
-      PowerShell credentials that contain authentication information for the connection.
-   .PARAMETER Force <switch>
-      If used, this will utilize a different API that forcefully deletes the application, without waiting for processes to finish.
-   .INPUTS
-      System.String[]
-   .OUTPUTS
-      None
-   .EXAMPLE
-      Remove-EssbaseApplication -RestURL 'https://your.domain.com/essbase/rest/v1' -Application 'MyApp' -WebSession $MyWebSession -Force -Confirm
-   .EXAMPLE
-      'MyApp', 'MyOtherApp' | Remove-EssbaseApplication -RestURL 'https://your.domain.com/essbase/rest/v1' -Credential $MyCredentials -WhatIf
-   .NOTES
-      Created by : Shayne Scovill
-   .LINK
-      https://github.com/Shayne55434/RESTBase
-#>
 function Remove-EssbaseApplication {
+   <#
+      .SYNOPSIS
+         Delete an Essbase application.
+      .DESCRIPTION
+         Deletes one or more Essbase applications. Optionally uses forced deletion without waiting for processes to finish.
+      .PARAMETER RestUrl
+         The base URL for the REST API (e.g., 'https://your.domain.com/essbase/rest/v1').
+      .PARAMETER Name
+         Application name(s) to delete. Supports pipeline input.
+      .PARAMETER Force
+         Use forced deletion API that doesn't wait for processes to finish.
+      .PARAMETER Credential
+         PowerShell credential object for authentication.
+      .PARAMETER AuthToken
+         Bearer token for authentication.
+      .PARAMETER WebSession
+         Existing web session for authentication.
+      .PARAMETER Username
+         Username for interactive credential prompt.
+      .INPUTS
+         System.String
+      .OUTPUTS
+         None
+      .EXAMPLE
+         Remove-EssbaseApplication -RestUrl 'https://your.domain.com/essbase/rest/v1' -Name 'MyApp' -WebSession $Session -Confirm
+      .EXAMPLE
+         'App1', 'App2' | Remove-EssbaseApplication -RestUrl 'https://your.domain.com/essbase/rest/v1' -Credential $Cred -Force -WhatIf
+      .NOTES
+         Created by: Shayne Scovill
+      .LINK
+         https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-applications-application-delete.html
+   #>
    [CmdletBinding(SupportsShouldProcess)]
    param(
-      [Parameter(Mandatory, Position=0)]
+      [Parameter(Mandatory, Position = 0)]
       [ValidateNotNullOrEmpty()]
-      [string]$RestURL,
+      [string]$RestUrl,
       
       [Parameter(Mandatory, ValueFromPipeline, ValueFromPipelineByPropertyName)]
       [ValidateNotNullOrEmpty()]
       [string[]]$Name,
       
-      [Parameter(Mandatory, ParameterSetName='WebSession')]
-      [ValidateNotNullOrEmpty()]
-      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+      [Parameter()]
+      [switch]$Force,
       
-      [Parameter(Mandatory, ParameterSetName='Credential')]
+      [Parameter(Mandatory, ParameterSetName = 'Credential')]
       [ValidateNotNullOrEmpty()]
       [pscredential]$Credential,
       
-      [Parameter(Mandatory, ParameterSetName='Username')]
+      [Parameter(Mandatory, ParameterSetName = 'AuthToken')]
       [ValidateNotNullOrEmpty()]
-      [string]$Username,
+      [string]$AuthToken,
       
-      [Parameter(HelpMessage='This will utilize a different API that forcefully deletes the application, without waiting for processes to finish.')]
-      [switch]$Force
+      [Parameter(Mandatory, ParameterSetName = 'WebSession')]
+      [ValidateNotNullOrEmpty()]
+      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+      
+      [Parameter(Mandatory, ParameterSetName = 'Username')]
+      [ValidateNotNullOrEmpty()]
+      [string]$Username
    )
    
    begin {
-      # Decipher which authentication type is being used
-      [hashtable]$htbAuthentication = @{}
-      if ($Credential) {
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided credentials.'
-      }
-      elseif ($WebSession)  {
-         $htbAuthentication.Add('WebSession', $WebSession)
-         Write-Verbose 'Using provided Web Session variable.'
-      }
-      else {
-         [pscredential]$Credential = Get-Credential -Message 'Please enter your Essbase password' -UserName $Username
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided username and password.'
-      }
+      $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
    }
+   
    process {
-      foreach ($Application in $Name) {
-         [hashtable]$htbInvokeParameters = @{
-            Method = 'Delete'
-            Uri = "$RestURL/applications/$($Application)"
-            Headers = @{
-               accept = 'Application/JSON'
-            }
-         } + $htbAuthentication
-         
+      foreach ($ApplicationName in $Name) {
          if ($Force.IsPresent) {
-            Write-Verbose "The application will be forcefully deleted."
-            $htbInvokeParameters.Uri = "$RestURL/applications/actions/shadowDelete/$($Application)"
+            $Uri = "$RestUrl/applications/actions/shadowDelete/$ApplicationName"
+            Write-Verbose "Using forced deletion for: $ApplicationName"
+         }
+         else {
+            $Uri = "$RestUrl/applications/$ApplicationName"
          }
          
-         try {
-            if ($PSCmdlet.ShouldProcess("$Application" , "Remove Application - This is PERMANENT")) {
-               Write-Verbose "Deleting application '$($Application)'."
-               $null = Invoke-RestMethod @htbInvokeParameters
+         if ($PSCmdlet.ShouldProcess("Application: $ApplicationName", "Permanently delete application")) {
+            try {
+               Write-Verbose "Deleting application: $ApplicationName"
+               $null = Invoke-EssbaseRequest -Method Delete -Uri $Uri @AuthParams
+               Write-Information "Application '$ApplicationName' deleted successfully."
             }
-         }
-         catch {
-            Write-Error "Failed to delete '$($Application)'. $($_)"
+            catch {
+               Write-Error "Failed to delete application '$ApplicationName': $_"
+            }
          }
       }
    }

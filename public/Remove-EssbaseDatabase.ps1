@@ -1,37 +1,41 @@
-<#
-   .SYNOPSIS
-      Delete a Database.
-   .DESCRIPTION
-      Delete a Database from a specified Application.
-   .PARAMETER RestURL <string>
-      The base URL for the REST API interface. Example: 'https://your.domain.com/essbase/rest/v1'
-   .PARAMETER Application <string>
-      The name of the Application where the Database to be deleted exists.
-   .PARAMETER Name <string[]>
-      The name of the Database to be deleted. Accepts value(s) from Pipeline.
-   .PARAMETER WebSession <WebRequestSession>
-      A Web Request Session that contains authentication and header information for the connection.
-   .PARAMETER Credentials <pscredential>
-      PowerShell credentials that contain authentication information for the connection.
-   .INPUTS
-      None
-   .OUTPUTS
-      None
-   .EXAMPLE
-      Remove-EssbaseDatabase -RestURL 'https://your.domain.com/essbase/rest/v1' -Application 'MyApp' -Database 'MyDatabase' -WebSession $MyWebSession -WhatIf
-   .EXAMPLE
-      Remove-EssbaseDatabase -RestURL 'https://your.domain.com/essbase/rest/v1' -Application 'MyApp' -Database 'MyDatabase' -Credential $MyCredentials -Confirm
-   .NOTES
-      Created by : Shayne Scovill
-   .LINK
-      https://github.com/Shayne55434/RESTBase
-#>
 function Remove-EssbaseDatabase {
+   <#
+      .SYNOPSIS
+         Delete an Essbase database.
+      .DESCRIPTION
+         Deletes one or more databases from a specified Essbase application.
+      .PARAMETER RestUrl
+         The base URL for the REST API (e.g., 'https://your.domain.com/essbase/rest/v1').
+      .PARAMETER Application
+         Application name where the database exists.
+      .PARAMETER Name
+         Database name(s) to delete. Supports pipeline input.
+      .PARAMETER Credential
+         PowerShell credential object for authentication.
+      .PARAMETER AuthToken
+         Bearer token for authentication.
+      .PARAMETER WebSession
+         Existing web session for authentication.
+      .PARAMETER Username
+         Username for interactive credential prompt.
+      .INPUTS
+         System.String
+      .OUTPUTS
+         None
+      .EXAMPLE
+         Remove-EssbaseDatabase -RestUrl 'https://your.domain.com/essbase/rest/v1' -Application 'MyApp' -Name 'MyDB' -WebSession $Session -WhatIf
+      .EXAMPLE
+         'DB1', 'DB2' | Remove-EssbaseDatabase -RestUrl 'https://your.domain.com/essbase/rest/v1' -Application 'MyApp' -Credential $Cred -Confirm
+      .NOTES
+         Created by: Shayne Scovill
+      .LINK
+         https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-applications-application-databases-database-delete.html
+   #>
    [CmdletBinding(SupportsShouldProcess)]
    param(
-      [Parameter(Mandatory, Position=0)]
+      [Parameter(Mandatory, Position = 0)]
       [ValidateNotNullOrEmpty()]
-      [string]$RestURL,
+      [string]$RestUrl,
       
       [Parameter(Mandatory)]
       [ValidateNotNullOrEmpty()]
@@ -41,55 +45,40 @@ function Remove-EssbaseDatabase {
       [ValidateNotNullOrEmpty()]
       [string[]]$Name,
       
-      [Parameter(Mandatory, ParameterSetName='WebSession')]
-      [ValidateNotNullOrEmpty()]
-      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
-      
-      [Parameter(Mandatory, ParameterSetName='Credential')]
+      [Parameter(Mandatory, ParameterSetName = 'Credential')]
       [ValidateNotNullOrEmpty()]
       [pscredential]$Credential,
       
-      [Parameter(Mandatory, ParameterSetName='Username')]
+      [Parameter(Mandatory, ParameterSetName = 'AuthToken')]
+      [ValidateNotNullOrEmpty()]
+      [string]$AuthToken,
+      
+      [Parameter(Mandatory, ParameterSetName = 'WebSession')]
+      [ValidateNotNullOrEmpty()]
+      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+      
+      [Parameter(Mandatory, ParameterSetName = 'Username')]
       [ValidateNotNullOrEmpty()]
       [string]$Username
    )
    
    begin {
-      # Decipher which authentication type is being used
-      [hashtable]$htbAuthentication = @{}
-      if ($Credential) {
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided credentials.'
-      }
-      elseif ($WebSession) {
-         $htbAuthentication.Add('WebSession', $WebSession)
-         Write-Verbose 'Using provided Web Session variable.'
-      }
-      else {
-         [pscredential]$Credential = Get-Credential -Message 'Please enter your Essbase password' -UserName $Username
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided username and password.'
-      }
+      $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
    }
+   
    process {
-      foreach ($Database in $Name) {
-         [hashtable]$htbInvokeParameters = @{
-            Method = 'Delete'
-            Uri = "$RestURL/applications/$($Application)/databases/$($Database)"
-            ContentType = 'Application/JSON'
-            Headers = @{
-               accept = 'Application/JSON'
-            }
-         } + $htbAuthentication
+      foreach ($DatabaseName in $Name) {
+         $Uri = "$RestUrl/applications/$Application/databases/$DatabaseName"
          
-         try {
-            if ($PSCmdlet.ShouldProcess("$Application.$Database" , "Remove Database")) {
-               Write-Verbose "Removing '$Application.$Database'."
-               $null = Invoke-RestMethod @htbInvokeParameters
+         if ($PSCmdlet.ShouldProcess("Database: $Application.$DatabaseName", "Permanently delete database")) {
+            try {
+               Write-Verbose "Deleting database: $Application.$DatabaseName"
+               $null = Invoke-EssbaseRequest -Method Delete -Uri $Uri @AuthParams
+               Write-Information "Database '$Application.$DatabaseName' deleted successfully."
             }
-         }
-         catch {
-            Write-Error "Failed to delete '$($Application).$($Database)'. $($_)"
+            catch {
+               Write-Error "Failed to delete database '$Application.$DatabaseName': $_"
+            }
          }
       }
    }

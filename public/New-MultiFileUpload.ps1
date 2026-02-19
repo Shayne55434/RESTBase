@@ -1,102 +1,92 @@
-<#
-   .SYNOPSIS
-      Upload file(s) to Essbase.
-   .DESCRIPTION
-      Upload file(s) to Essbase.
-   .PARAMETER RestURL <string>
-      The base URL for the REST API interface. Example: 'https://your.domain.com/essbase/rest/v1'
-   .PARAMETER Path <string>
-      Name of the Application to upload the file to.
-   .PARAMETER WebSession <WebRequestSession>
-      A Web Request Session that contains authentication and header information for the connection.
-   .PARAMETER Credentials <pscredential>
-      PowerShell credentials that contain authentication information for the connection.
-   .PARAMETER Overwrite <switch>
-      If used, it will overwrite any files with the same name.
-   .INPUTS
-      System.String[]
-   .OUTPUTS
-      None
-   .EXAMPLE
-      Out-EssbaseFile -RestURL 'https://your.domain.com/essbase/rest/v1' -Application 'MyApp' -Database 'MyDatabase' -FilePath 'C:\MyFile.txt' -WebSession $MyWebsession -Overwrite
-   .EXAMPLE
-      'C:\MyFile.txt', 'C:\MyOtherFile.txt' | Out-EssbaseFile -RestURL 'https://your.domain.com/essbase/rest/v1' -Application 'MyApp' -Database 'MyDatabase' -Credential $MyCredentials
-   .NOTES
-      Created by : Shayne Scovill
-   .LINK
-      https://github.com/Shayne55434/RESTBase
-#>
-function Out-EssbaseFile {
+function New-MultiFileUpload {
+   <#
+      .SYNOPSIS
+         Initialize a multipart file upload to Essbase.
+      .DESCRIPTION
+         Creates a multipart upload session for uploading large files to Essbase. Returns an upload ID for subsequent chunk uploads.
+      .PARAMETER RestUrl
+         The base URL for the REST API (e.g., 'https://your.domain.com/essbase/rest/v1').
+      .PARAMETER Path
+         Essbase file system path where the file will be uploaded (e.g., '/applications/App/DB/file.txt').
+      .PARAMETER Credential
+         PowerShell credential object for authentication.
+      .PARAMETER AuthToken
+         Bearer token for authentication.
+      .PARAMETER WebSession
+         Existing web session for authentication.
+      .PARAMETER Username
+         Username for interactive credential prompt.
+      .PARAMETER Overwrite
+         Overwrite existing file with the same name.
+      .INPUTS
+         System.String
+      .OUTPUTS
+         System.String (Upload ID)
+      .EXAMPLE
+         $UploadId = New-MultiFileUpload -RestUrl 'https://your.domain.com/essbase/rest/v1' -Path '/applications/App/DB/data.txt' -WebSession $Session -Overwrite
+      .EXAMPLE
+         $Ids = '/applications/App/DB/file1.txt', '/applications/App/DB/file2.txt' | New-MultiFileUpload -RestUrl $Url -Credential $Cred
+      .NOTES
+         Created by: Shayne Scovill
+      .LINK
+         https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-files-upload-create-post.html
+   #>
+
    [CmdletBinding()]
    param(
-      [Parameter(Mandatory, Position=0)]
+      [Parameter(Mandatory, Position = 0)]
       [ValidateNotNullOrEmpty()]
-      [string]$RestURL,
+      [string]$RestUrl,
       
       [Parameter(Mandatory, ValueFromPipeline)]
       [ValidateNotNullOrEmpty()]
       [string[]]$Path,
       
-      [Parameter()]
-      [ValidateNotNullOrEmpty()]
-      [switch]$Overwrite,
-      
-      [Parameter(Mandatory, ParameterSetName='WebSession')]
-      [ValidateNotNullOrEmpty()]
-      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
-      
-      [Parameter(Mandatory, ParameterSetName='Credential')]
+      [Parameter(Mandatory, ParameterSetName = 'Credential')]
       [ValidateNotNullOrEmpty()]
       [pscredential]$Credential,
       
-      [Parameter(Mandatory, ParameterSetName='Username')]
+      [Parameter(Mandatory, ParameterSetName = 'AuthToken')]
       [ValidateNotNullOrEmpty()]
-      [string]$Username
+      [string]$AuthToken,
+      
+      [Parameter(Mandatory, ParameterSetName = 'WebSession')]
+      [ValidateNotNullOrEmpty()]
+      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+      
+      [Parameter(Mandatory, ParameterSetName = 'Username')]
+      [ValidateNotNullOrEmpty()]
+      [string]$Username,
+      
+      [Parameter()]
+      [switch]$Overwrite
    )
    
    begin {
-      # Decipher which authentication type is being used
-      [hashtable]$htbAuthentication = @{}
-      if ($Credential) {
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided credentials.'
-      }
-      elseif ($WebSession) {
-         $htbAuthentication.Add('WebSession', $WebSession)
-         Write-Verbose 'Using provided Web Session variable.'
-      }
-      else {
-         [pscredential]$Credential = Get-Credential -Message 'Please enter your Essbase password' -UserName $Username
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided username and password.'
-      }
-      $UploadID = @()
+      $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
+      $Results = @()
    }
    process {
-      foreach ($strPath in $Path) {
-         [hashtable]$htbInvokeParameters = @{
-            Method = 'Post'
-            Uri = "$RestURL/files/upload-create$($Path)"
-            ContentType = 'Application/JSON'
-            Headers = @{
-               accept = 'Application/JSON'
-            }
-         } + $htbAuthentication
+      foreach ($FilePath in $Path) {
+         $EncodedPath = [System.Web.HttpUtility]::UrlEncode($FilePath)
+         $Uri = "$RestUrl/files/upload-create?path=$EncodedPath"
          
          if ($Overwrite.IsPresent) {
-            Write-Verbose "Overwriting '$strFileName', if it exists."
-            $htbInvokeParameters.Uri = "$($htbInvokeParameters.Uri)?overwrite=true"
+            $Uri += "&overwrite=true"
+            Write-Verbose "Overwrite enabled for '$FilePath'"
          }
          
          try {
-            $results = Invoke-RestMethod @htbInvokeParameters
-            $UploadID += $results
+            $Response = Invoke-EssbaseRequest -Method Post -Uri $Uri @AuthParams
+            Write-Verbose "Created upload session for '$FilePath': $($Response.id)"
+            $Results += $Response
          }
          catch {
-            Write-Error "Failed to create upload for '$strPath'. $($_)"
+            Write-Error "Failed to create multipart upload for '$FilePath': $_"
          }
       }
-      
-      return $UploadID
+   }
+   end {
+      return $Results
    }
 }

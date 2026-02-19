@@ -1,47 +1,50 @@
-<#
-   .SYNOPSIS
-      Creates a Shadow Copy Application.
-   .DESCRIPTION
-      Creates a Shadow Copy of an existing Application. Essbase 21c or greater is required to utilize Shadow Copies.
-   .PARAMETER RestURL <string>
-      The base URL for the REST API interface. Example: 'https://your.domain.com/essbase/rest/v1'
-   .PARAMETER PrimaryApplication <string>
-      The name of the  Application to be promoted to.
-   .PARAMETER ShadowApplication <string>
-      The name of the Shadow Application to be promoted.
-   .PARAMETER RunInBackground <switch>
-      Schedule 'Shadow Copy' as a Job.
-   .PARAMETER Timeout <int>
-      Time interval (in seconds) to wait for any active write-operations to complete.
-   .PARAMETER HideShadow <switch>
-      Hiding a Shadow Copy prevents anyone from seeing the application.
-   .PARAMETER DeleteExisting <switch>
-      If used, the existing Shadow Application will be forcefully deleted before being recreated/copied from the Primary Application.
-   .PARAMETER WebSession <WebRequestSession>
-      A Web Request Session that contains authentication and header information for the connection.
-   .PARAMETER Credential <pscredential>
-      PowerShell credentials that contain authentication information for the connection.
-   .PARAMETER Username <string>
-      If used, you will be prompted to enter your password.
-   .INPUTS
-      None
-   .OUTPUTS
-      None
-   .EXAMPLE
-      New-ShadowCopy -RestURL 'https://your.domain.com/essbase/rest/v1' -PrimaryApplication 'MyApp' -ShadowApplication 'MyShadowApp' -WebSession $MyWebSession
-   .EXAMPLE
-      New-ShadowCopy -RestURL 'https://your.domain.com/essbase/rest/v1' -PrimaryApplication 'MyApp' -ShadowApplication 'MyShadowApp' -Credential $MyCredentials -HideShadow -DeleteExisting -RunInBackground
-   .NOTES
-      Created by : Shayne Scovill
-   .LINK
-      https://github.com/Shayne55434/RESTBase
-#>
 function New-ShadowCopy {
+   <#
+      .SYNOPSIS
+         Creates a Shadow Copy Application.
+      .DESCRIPTION
+         Creates a Shadow Copy of an existing Application. Essbase 21c or greater is required to utilize Shadow Copies.
+      .PARAMETER RestUrl
+         The base URL for the REST API (e.g., 'https://your.domain.com/essbase/rest/v1').
+      .PARAMETER PrimaryApplication
+         The name of the Application to be copied.
+      .PARAMETER ShadowApplication
+         The name of the Shadow Application to be created.
+      .PARAMETER RunInBackground
+         Schedule 'Shadow Copy' as a Job.
+      .PARAMETER Timeout
+         Time interval (in seconds) to wait for any active write-operations to complete.
+      .PARAMETER HideShadow
+         Hiding a Shadow Copy prevents anyone from seeing the application.
+      .PARAMETER DeleteExisting
+         If used, the existing Shadow Application will be forcefully deleted before being recreated/copied from the Primary Application.
+      .PARAMETER Credential
+         PowerShell credential object for authentication.
+      .PARAMETER AuthToken
+         Bearer token for authentication.
+      .PARAMETER WebSession
+         Existing web session for authentication.
+      .PARAMETER Username
+         Username for interactive credential prompt.
+      .INPUTS
+         None
+      .OUTPUTS
+         System.Object
+      .EXAMPLE
+         New-ShadowCopy -RestUrl 'https://your.domain.com/essbase/rest/v1' -PrimaryApplication 'App' -ShadowApplication 'AppShadow' -WebSession $Session
+      .EXAMPLE
+         New-ShadowCopy -RestUrl $Url -PrimaryApplication 'App' -ShadowApplication 'Shadow' -Credential $Cred -HideShadow -DeleteExisting -RunInBackground
+      .NOTES
+         Created by: Shayne Scovill
+      .LINK
+         https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-applications-actions-shadowcopy-post.html
+   #>
+   
    [CmdletBinding(SupportsShouldProcess)]
    param(
-      [Parameter(Mandatory, Position=0)]
+      [Parameter(Mandatory, Position = 0)]
       [ValidateNotNullOrEmpty()]
-      [string]$RestURL,
+      [string]$RestUrl,
       
       [Parameter(Mandatory)]
       [ValidateNotNullOrEmpty()]
@@ -51,106 +54,94 @@ function New-ShadowCopy {
       [ValidateNotNullOrEmpty()]
       [string]$ShadowApplication,
       
-      [Parameter(HelpMessage='Run as a job.')]
+      [Parameter(HelpMessage = 'Run as a job.')]
       [switch]$RunInBackground,
       
       [Parameter()]
-      [ValidateNotNullOrEmpty()]
-      [int]$Timeout,
+      [int]$Timeout = 0,
       
-      [Parameter(HelpMessage='Hiding a Shadow Copy prevents anyone from seeing the application, but it also prevents running the compare against it.')]
+      [Parameter(HelpMessage = 'Hiding a Shadow Copy prevents anyone from seeing the application, but it also prevents running the compare against it.')]
       [switch]$HideShadow,
       
-      [Parameter(HelpMessage='If used, the existing Shadow Application will be forcefully deleted before being recreated/copied from the Primary Application.')]
+      [Parameter(HelpMessage = 'If used, the existing Shadow Application will be forcefully deleted before being recreated/copied from the Primary Application.')]
       [switch]$DeleteExisting,
       
-      [Parameter(Mandatory, ParameterSetName='WebSession')]
-      [ValidateNotNullOrEmpty()]
-      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
-      
-      [Parameter(Mandatory, ParameterSetName='Credential')]
+      [Parameter(Mandatory, ParameterSetName = 'Credential')]
       [ValidateNotNullOrEmpty()]
       [pscredential]$Credential,
       
-      [Parameter(Mandatory, ParameterSetName='Username')]
+      [Parameter(Mandatory, ParameterSetName = 'AuthToken')]
+      [ValidateNotNullOrEmpty()]
+      [string]$AuthToken,
+      
+      [Parameter(Mandatory, ParameterSetName = 'WebSession')]
+      [ValidateNotNullOrEmpty()]
+      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+      
+      [Parameter(Mandatory, ParameterSetName = 'Username')]
       [ValidateNotNullOrEmpty()]
       [string]$Username
    )
    
-   # Decipher which authentication type is being used
-   [hashtable]$htbAuthentication = @{}
-   if ($Credential) {
-      $htbAuthentication.Add('Credential', $Credential)
-      Write-Verbose 'Using provided credentials.'
-   }
-   elseif ($WebSession) {
-      $htbAuthentication.Add('WebSession', $WebSession)
-      Write-Verbose 'Using provided Web Session variable.'
-   }
-   else {
-      [pscredential]$Credential = Get-Credential -Message 'Please enter your Essbase password' -UserName $Username
-      $htbAuthentication.Add('Credential', $Credential)
-      Write-Verbose 'Using provided username and password.'
-   }
+   $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
    
    if ($DeleteExisting.IsPresent) {
       try {
-         Write-Verbose "Deleting '$ShadowApplication'."
-         # Ignore errors here, since if the application exists, the creation of the Shadow copy will fail.
-         # If it does not exist, then this step is pointless and no need to show the error.
-         $null = Remove-EssbaseApplication -RestURL $RestURL @htbAuthentication -Name $ShadowApplication -Force -Confirm -ErrorAction SilentlyContinue
+         Write-Verbose "Deleting existing shadow application '$ShadowApplication'"
+         $null = Remove-EssbaseApplication -RestUrl $RestUrl -Name $ShadowApplication -Force @AuthParams -ErrorAction SilentlyContinue
       }
       catch {
-         Write-Error "Could not delete '$ShadowApplication'. $($_)"
+         Write-Verbose "Shadow application '$ShadowApplication' does not exist or could not be deleted"
       }
    }
    
    if (-not($Timeout)) {
       $Timeout = 0
    }
-   [hashtable]$htbInvokeParameters = @{
-      Method = 'Post'
-      Uri = "$RestURL/applications/actions/shadowCopy"
-      ContentType = 'Application/JSON'
-      Body = @{
-         primaryAppName= $PrimaryApplication
-         shadowAppName = $ShadowApplication
-         hideShadow = $HideShadow.IsPresent
-         waitForOngoingUpdatesInSecs = $Timeout
-         runInBackground = $RunInBackground.IsPresent
-      } | ConvertTo-Json
-      Headers = @{
-         accept = 'Application/JSON'
-      }
+   
+   $Body = @{
+      primaryAppName               = $PrimaryApplication
+      shadowAppName                = $ShadowApplication
+      hideShadow                   = $HideShadow.IsPresent
+      waitForOngoingUpdatesInSecs  = $Timeout
+      runInBackground              = $RunInBackground.IsPresent
    }
-   $htbInvokeParameters += $htbAuthentication
+   
+   $Uri = "$RestUrl/applications/actions/shadowCopy"
    
    try {
-      if ($PSCmdlet.ShouldProcess("$PrimaryApplication", "Create Shadow Copy")) {
-         [object]$objJobResults = Invoke-RestMethod @htbInvokeParameters
+      if ($PSCmdlet.ShouldProcess($PrimaryApplication, "Create Shadow Copy")) {
+         Write-Verbose "Creating shadow copy of '$PrimaryApplication' as '$ShadowApplication'"
+         $JobResults = Invoke-EssbaseRequest -Method Post -Uri $Uri -Body $Body @AuthParams
          
-         # If RunInBackground is selected, wait for the job to complete and report the final Status
          if ($RunInBackground.IsPresent) {
-            Write-Debug "Job_ID: $($objJobResults.job_ID); appName: $($objJobResults.appName); dbName: $($objJobResults.dbName); jobType: $($objJobResults.jobType); statusMessage: $($objJobResults.statusMessage);"
-            [string]$strProgressCharacter = '.'
-            do {
-               Write-Progress -CurrentOperation ("Executing job '$($objJobResults.job_ID) - $($objJobResults.jobType)'." ) ("Waiting for the job to complete$strProgressCharacter")
-               [object]$objJobDetails = Get-EssbaseJob -RestURL $RestURL -JobID $objJobResults.job_ID @htbAuthentication
-               Start-Sleep -Seconds 2
-               $strProgressCharacter += '.'
-            } while ($objJobDetails.statusMessage -eq 'In Progress')
-            Write-Progress -CurrentOperation ("Executing job '$($objJobResults.job_ID) - $($objJobResults.jobType)'.") -Completed "Done waiting for the job to complete."
+            $JobId = $JobResults.job_ID
+            Write-Verbose "Shadow copy job started: $JobId"
+            Write-Host "Shadow copy in progress" -NoNewline
             
-            if($objJobDetails.statusMessage -match 'Failed') {
-               Write-Error "The job has failed. $($objJobDetails.jobOutputInfo.errorMessage)."
+            do {
+               Write-Host "." -NoNewline
+               Start-Sleep -Seconds 2
+               $JobDetails = Get-EssbaseJob -RestUrl $RestUrl -JobId $JobId @AuthParams
+            } while ($JobDetails.statusMessage -eq 'In Progress')
+            
+            Write-Host ""
+            
+            if ($JobDetails.statusMessage -match 'Failed') {
+               Write-Error "Shadow copy job failed: $($JobDetails.jobOutputInfo.errorMessage)"
             }
             else {
-               Write-Verbose "Job has completed. Status: $($objJobDetails.statusMessage)."
+               Write-Information "Shadow copy completed with status: $($JobDetails.statusMessage)"
+               return $JobDetails
             }
+         }
+         else {
+            Write-Verbose "Shadow copy created successfully"
+            return $JobResults
          }
       }
    }
    catch {
-      Write-Error "Unable to create shadow copy of '$PrimaryApplication'. $($_)"
+      Write-Error "Failed to create shadow copy of '$PrimaryApplication': $_"
    }
 }

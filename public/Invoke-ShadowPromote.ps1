@@ -1,46 +1,49 @@
-<#
-   .SYNOPSIS
-      Promotes a Shadow Copy Application to a Primary Application.
-   .DESCRIPTION
-      Promotes a Shadow Copy Application to the specified Primary Application.
-   .PARAMETER RestURL <string>
-      The base URL for the REST API interface. Example: 'https://your.domain.com/essbase/rest/v1'
-   .PARAMETER PrimaryApplication <string>
-      The name of the  Application to be promoted to.
-   .PARAMETER ShadowApplication <string>
-      The name of the Shadow Application to be promoted.
-   .PARAMETER RunInBackground <switch>
-      Schedule 'Shadow Promote' as a Job.
-   .PARAMETER Timeout <int>
-      Time interval (in seconds) to wait before forcefully unloading/stopping an application, if it is performing ongoing requests.
-      If a graceful unload process fails or takes longer than permitted by this timeout, Essbase forcefully terminates the application.
-   .PARAMETER StartApplication <switch>
-      The Primary application cannot be in the stopped state when promoting a Shadow Copy. Using this switch will attempt to start the application.
-   .PARAMETER WebSession <WebRequestSession>
-      A Web Request Session that contains authentication and header information for the connection.
-   .PARAMETER Credentials <pscredential>
-      PowerShell credentials that contain authentication information for the connection.
-   .PARAMETER Username <string>
-      If used, you will be prompted to enter your password.
-   .INPUTS
-      None
-   .OUTPUTS
-      None
-   .EXAMPLE
-      Invoke-ShadowPromote -RestURL 'https://your.domain.com/essbase/rest/v1' -PrimaryApplication 'Test' -ShadowApplication 'Test_Shadow' -WebSession $MyWebSession
-   .EXAMPLE
-      Invoke-ShadowPromote -RestURL 'https://your.domain.com/essbase/rest/v1' -PrimaryApplication 'Test' -ShadowApplication 'Test_Shadow' -Credential $MyCredentials
-   .NOTES
-      Created by : Shayne Scovill
-   .LINK
-      https://github.com/Shayne55434/RESTBase
-#>
 function Invoke-ShadowPromote {
+   <#
+      .SYNOPSIS
+         Promotes a Shadow Copy Application to a Primary Application.
+      .DESCRIPTION
+         Promotes a Shadow Copy Application to the specified Primary Application.
+      .PARAMETER RestUrl
+         The base URL for the REST API (e.g., 'https://your.domain.com/essbase/rest/v1').
+      .PARAMETER PrimaryApplication
+         The name of the Application to be promoted to.
+      .PARAMETER ShadowApplication
+         The name of the Shadow Application to be promoted.
+      .PARAMETER RunInBackground
+         Schedule 'Shadow Promote' as a Job.
+      .PARAMETER Timeout
+         Time interval (in seconds) to wait before forcefully unloading/stopping an application, if it is performing ongoing requests.
+         If a graceful unload process fails or takes longer than permitted by this timeout, Essbase forcefully terminates the application.
+      .PARAMETER StartApplication
+         The Primary application cannot be in the stopped state when promoting a Shadow Copy. Using this switch will attempt to start the application.
+      .PARAMETER Credential
+         PowerShell credential object for authentication.
+      .PARAMETER AuthToken
+         Bearer token for authentication.
+      .PARAMETER WebSession
+         Existing web session for authentication.
+      .PARAMETER Username
+         Username for interactive credential prompt.
+      .INPUTS
+         None
+      .OUTPUTS
+         System.Object
+      .EXAMPLE
+         Invoke-ShadowPromote -RestUrl 'https://your.domain.com/essbase/rest/v1' -PrimaryApplication 'App' -ShadowApplication 'AppShadow' -WebSession $Session
+      .EXAMPLE
+         Invoke-ShadowPromote -RestUrl $Url -PrimaryApplication 'App' -ShadowApplication 'Shadow' -Credential $Cred -StartApplication -RunInBackground
+      .NOTES
+         Created by: Shayne Scovill
+      .LINK
+         https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-applications-actions-shadowpromote-post.html
+   #>
+   
    [CmdletBinding(SupportsShouldProcess)]
    param(
-      [Parameter(Mandatory, Position=0)]
+      [Parameter(Mandatory, Position = 0)]
       [ValidateNotNullOrEmpty()]
-      [string]$RestURL,
+      [string]$RestUrl,
       
       [Parameter(Mandatory)]
       [ValidateNotNullOrEmpty()]
@@ -51,95 +54,85 @@ function Invoke-ShadowPromote {
       [string]$ShadowApplication,
       
       [Parameter()]
-      [ValidateNotNullOrEmpty()]
       [switch]$StartApplication,
       
       [Parameter()]
       [switch]$RunInBackground,
       
       [Parameter()]
-      [ValidateNotNullOrEmpty()]
-      [int]$Timeout,
+      [int]$Timeout = 0,
       
-      [Parameter(Mandatory, ParameterSetName='WebSession')]
-      [ValidateNotNullOrEmpty()]
-      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
-      
-      [Parameter(Mandatory, ParameterSetName='Credential')]
+      [Parameter(Mandatory, ParameterSetName = 'Credential')]
       [ValidateNotNullOrEmpty()]
       [pscredential]$Credential,
       
-      [Parameter(Mandatory, ParameterSetName='Username')]
+      [Parameter(Mandatory, ParameterSetName = 'AuthToken')]
+      [ValidateNotNullOrEmpty()]
+      [string]$AuthToken,
+      
+      [Parameter(Mandatory, ParameterSetName = 'WebSession')]
+      [ValidateNotNullOrEmpty()]
+      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+      
+      [Parameter(Mandatory, ParameterSetName = 'Username')]
       [ValidateNotNullOrEmpty()]
       [string]$Username
    )
    
-   # Decipher which authentication type is being used
-   [hashtable]$htbAuthentication = @{}
-   if ($Credential) {
-      $htbAuthentication.Add('Credential', $Credential)
-      Write-Verbose 'Using provided credentials.'
-   }
-   elseif ($WebSession) {
-      $htbAuthentication.Add('WebSession', $WebSession)
-      Write-Verbose 'Using provided Web Session variable.'
-   }
-   else {
-      [pscredential]$Credential = Get-Credential -Message 'Please enter your Essbase password' -UserName $Username
-      $htbAuthentication.Add('Credential', $Credential)
-      Write-Verbose 'Using provided username and password.'
+   $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
+   
+   if ($StartApplication.IsPresent) {
+      try {
+         Write-Verbose "Starting '$ShadowApplication'"
+         $null = Start-EssbaseApplication -RestUrl $RestUrl -Application $ShadowApplication @AuthParams
+      }
+      catch {
+         Write-Error "Failed to start '$ShadowApplication': $_"
+      }
    }
    
    if (-not($Timeout)) {
       $Timeout = 0
    }
-   [hashtable]$htbInvokeParameters = @{
-      Method = 'Post'
-      Uri = "$RestURL/applications/actions/shadowPromote"
-      ContentType = 'Application/JSON'
-      Body = @{
-         shadowAppName= $ShadowApplication
-         primaryAppName = $PrimaryApplication
-         timeoutToForceUnloadApp = $Timeout
-         runInBackground = $RunInBackground.IsPresent
-      } | ConvertTo-Json
-      Headers = @{
-         accept = 'Application/JSON'
-      }
-   } + $htbAuthentication
    
-   if ($StartApplication.IsPresent) {
-      try {
-         Write-Verbose "Starting $ShadowApplication."
-         $null = Start-EssbaseApplication -RestURL $RestURL @htbAuthentication -Application $ShadowApplication
-      }
-      catch {
-         Write-Error "Unable to start $ShadowApplication. $($_)"
-      }
+   $Body = @{
+      shadowAppName            = $ShadowApplication
+      primaryAppName           = $PrimaryApplication
+      timeoutToForceUnloadApp  = $Timeout
+      runInBackground          = $RunInBackground.IsPresent
    }
    
+   $Uri = "$RestUrl/applications/actions/shadowPromote"
+   
    try {
-      if ($PSCmdlet.ShouldProcess("$PrimaryApplication" , "Promote '$ShadowApplication'")) {
-         [object]$objJobResults = Invoke-RestMethod @htbInvokeParameters
+      if ($PSCmdlet.ShouldProcess($PrimaryApplication, "Promote '$ShadowApplication'")) {
+         Write-Verbose "Promoting '$ShadowApplication' to '$PrimaryApplication'"
+         $JobResults = Invoke-EssbaseRequest -Method Post -Uri $Uri -Body $Body @AuthParams
          
-         # If RunInBackground is selected, wait for the job to complete and report the final Status
          if ($RunInBackground.IsPresent) {
-            Write-Debug "Job_ID: $($objJobResults.job_ID); appName: $($objJobResults.appName); dbName: $($objJobResults.dbName); jobType: $($objJobResults.jobType); statusMessage: $($objJobResults.statusMessage);"
-            [string]$strProgressCharacter = '.'
-            do {
-               Write-Progress -CurrentOperation ("Executing job '$($objJobResults.job_ID) - $($objJobResults.jobType)'." ) ("Waiting for the job to complete$strProgressCharacter")
-               [object]$objJobDetails = Get-EssbaseJob -RestURL $RestURL -JobID $objJobResults.job_ID @htbAuthentication
-               Start-Sleep -Seconds 2
-               $strProgressCharacter += '.'
-            } while ($objJobDetails.statusMessage -eq 'In Progress')
-            Write-Progress -CurrentOperation ("Executing job '$($objJobResults.job_ID) - $($objJobResults.jobType)'.") -Completed "Done waiting for the job to complete."
+            $JobId = $JobResults.job_ID
+            Write-Verbose "Shadow promote job started: $JobId"
+            Write-Host "Shadow promote in progress" -NoNewline
             
-            if($objJobDetails.statusMessage -match 'Failed') {
-               Write-Error "The job has failed. $($objJobDetails.jobOutputInfo.errorMessage)."
+            do {
+               Write-Host "." -NoNewline
+               Start-Sleep -Seconds 2
+               $JobDetails = Get-EssbaseJob -RestUrl $RestUrl -JobId $JobId @AuthParams
+            } while ($JobDetails.statusMessage -eq 'In Progress')
+            
+            Write-Host ""
+            
+            if ($JobDetails.statusMessage -match 'Failed') {
+               Write-Error "Shadow promote job failed: $($JobDetails.jobOutputInfo.errorMessage)"
             }
             else {
-               Write-Verbose "Job has completed. Status: $($objJobDetails.statusMessage)."
+               Write-Information "Shadow promote completed with status: $($JobDetails.statusMessage)"
+               return $JobDetails
             }
+         }
+         else {
+            Write-Verbose "Shadow promote completed successfully"
+            return $JobResults
          }
       }
       else {
@@ -147,6 +140,6 @@ function Invoke-ShadowPromote {
       }
    }
    catch {
-      Write-Error "Unable to promote '$ShadowApplication' to '$PrimaryApplication'. $($_)"
+      Write-Error "Failed to promote '$ShadowApplication' to '$PrimaryApplication': $_"
    }
 }

@@ -1,48 +1,59 @@
-<#
-   .SYNOPSIS
-      Get a list of Applications from Essbase.
-   .DESCRIPTION
-      Get a list of Applications from Essbase with the specified visibilty.
-   .PARAMETER RestURL <string>
-      The base URL for the REST API interface. Example: 'https://your.domain.com/essbase/rest/v1'
-   .PARAMETER Application <string>
-      Gets the details of the specified application.
-   .PARAMETER Filter <string>
-      Filters the results.
-   .PARAMETER Offset <int>
-      Excludes the first $Offset from the results.
-   .PARAMETER Limit <int>
-      Limits the number of results.
-   .PARAMETER Visibility <string>
-      ALL shows every application. HIDDEN shows only hidden (Shadow Copy) applications. REGULAR shows all other applications.
-      *** Using this changes the results from an object to a simply array of application names ***
-   .PARAMETER WebSession <WebRequestSession>
-      A Web Request Session that contains authentication and header information for the connection.
-   .PARAMETER Credentials <pscredential>
-      PowerShell credentials that contain authentication information for the connection.
-   .INPUTS
-      None
-   .OUTPUTS
-      System.Object
-   .EXAMPLE
-      Get-EssbaseApplication -RestURL 'https://your.domain.com/essbase/rest/v1' -Visibility ALL -WebSession $MyWebSession
-   .EXAMPLE
-      Get-EssbaseApplication -RestURL 'https://your.domain.com/essbase/rest/v1' -Visibility REGULAR -Credential $MyCredentials
-   .NOTES
-      Created by : Shayne Scovill
-   .LINK
-      https://github.com/Shayne55434/RESTBase
-#>
 function Get-EssbaseApplication {
+   <#
+      .SYNOPSIS
+         Get a list of Essbase applications.
+      .DESCRIPTION
+         Retrieves application information from the Essbase server. Can return all applications,
+         specific application details, or filtered results.
+      .PARAMETER RestUrl
+         The base URL for the REST API (e.g., 'https://your.domain.com/essbase/rest/v1').
+      .PARAMETER Name
+         Specific application name to retrieve details for.
+      .PARAMETER Visibility
+         Filter results by visibility: ALL, HIDDEN (Shadow Copies), or REGULAR (non-hidden).
+      .PARAMETER Filter
+         Search keyword to filter results.
+      .PARAMETER Offset
+         Number of results to skip (for pagination).
+      .PARAMETER Limit
+         Maximum number of results to return.
+      .PARAMETER Credential
+         PowerShell credential object for authentication.
+      .PARAMETER WebSession
+         Existing web session for authentication.
+      .PARAMETER Username
+         Username for interactive credential prompt.
+      .INPUTS
+         System.String
+      .OUTPUTS
+         System.Object
+      .EXAMPLE
+         Get-EssbaseApplication -RestUrl 'https://your.domain.com/essbase/rest/v1' -Credential $Cred
+      .EXAMPLE
+         Get-EssbaseApplication -RestUrl 'https://your.domain.com/essbase/rest/v1' -Name 'MyApp' -WebSession $Session
+      .EXAMPLE
+         Get-EssbaseApplication -RestUrl 'https://your.domain.com/essbase/rest/v1' -Visibility HIDDEN -Username 'user@domain.com'
+      .EXAMPLE
+         Get-EssbaseApplication -RestUrl 'https://your.domain.com/essbase/rest/v1' -AuthToken $Token
+      .NOTES
+         Created by: Shayne Scovill
+      .LINK
+         https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-applications-get.html
+   #>
+   
    [CmdletBinding()]
-   Param(
-      [Parameter(Mandatory, Position=0)]
+   param(
+      [Parameter(Mandatory, Position = 0)]
       [ValidateNotNullOrEmpty()]
-      [string]$RestURL,
+      [string]$RestUrl,
       
       [Parameter(ValueFromPipeline)]
       [ValidateNotNullOrEmpty()]
-      [string]$Application,
+      [string]$Name,
+      
+      [Parameter()]
+      [ValidateSet('ALL', 'HIDDEN', 'REGULAR')]
+      [string]$Visibility,
       
       [Parameter()]
       [ValidateNotNullOrEmpty()]
@@ -56,98 +67,102 @@ function Get-EssbaseApplication {
       [ValidateNotNullOrEmpty()]
       [int]$Limit,
       
-      [Parameter(HelpMessage='ALL shows every application. HIDDEN shows only hidden (Shadow Copy) applications. REGULAR shows all other applications.')]
-      [ValidateSet('ALL', 'HIDDEN', 'REGULAR')]
-      [string]$Visibility,
+      [Parameter()]
+      [switch]$Tree,
       
-      [Parameter(Mandatory, ParameterSetName='WebSession')]
-      [ValidateNotNullOrEmpty()]
-      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
-      
-      [Parameter(Mandatory, ParameterSetName='Credential')]
+      [Parameter(Mandatory, ParameterSetName = 'Credential')]
       [ValidateNotNullOrEmpty()]
       [pscredential]$Credential,
       
-      [Parameter(Mandatory, ParameterSetName='Username')]
+      [Parameter(Mandatory, ParameterSetName = 'AuthToken')]
+      [ValidateNotNullOrEmpty()]
+      [string]$AuthToken,
+      
+      [Parameter(Mandatory, ParameterSetName = 'WebSession')]
+      [ValidateNotNullOrEmpty()]
+      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+      
+      [Parameter(Mandatory, ParameterSetName = 'Username')]
       [ValidateNotNullOrEmpty()]
       [string]$Username
    )
    
-   # Warn on any invalid parameters
-   if ($Application -and ($Visibility -or $Filter -or $Offset -or $Limit)) {
-      Write-Warning 'Application should not be used with other arguments (Visibility, Filter, Offset, or Limit). Application will take precedence.'
+   begin {
+      $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
+      $SelectProperties = @(
+         @{Name = 'Name'; Expression = {$_.name}},
+         @{Name = 'Status'; Expression = {$_.status}},
+         @{Name = 'Description'; Expression = {$_.description}},
+         @{Name = 'Type'; Expression = {$_.type}},
+         @{Name = 'Owner'; Expression = {$_.owner}},
+         @{Name = 'ShowVariables'; Expression = {$_.appVariablesSetting.showVariables}},
+         @{Name = 'UpdateVariables'; Expression = {$_.appVariablesSetting.updateVariables}},
+         @{Name = 'ConnectedUsersCount'; Expression = {$_.connectedUsersCount}},
+         @{Name = 'CreationTime'; Expression = {((Get-Date '1970-01-01') + [TimeSpan]::FromMilliseconds($_.creationTime)).ToLocalTime()}},
+         @{Name = 'CreationTimeUtc'; Expression = {((Get-Date '1970-01-01') + [TimeSpan]::FromMilliseconds($_.creationTime))}},
+         @{Name = 'InspectAppAllowed'; Expression = {$_.inspectAppAllowed}},
+         @{Name = 'ModifiedBy'; Expression = {$_.modifiedBy}},
+         @{Name = 'ModifiedTime'; Expression = {((Get-Date '1970-01-01') + [TimeSpan]::FromMilliseconds($_.modifiedTime)).ToLocalTime()}},
+         @{Name = 'ModifiedTimeUtc'; Expression = {((Get-Date '1970-01-01') + [TimeSpan]::FromMilliseconds($_.modifiedTime))}},
+         # @{Name = 'Role'; Expression = {$_.role}}, # Only applicable when retrieving a list of applications, not a single application
+         @{Name = 'StartStopAppAllowed'; Expression = {$_.startStopAppAllowed}},
+         @{Name = 'Links'; Expression = {$_.links | Where-Object {$_.method -eq 'GET'} | Select-Object -ExpandProperty href -Unique -ErrorAction Ignore}}
+      )
    }
-   elseif ($Visibility) {
-      Write-Warning 'Using Visibility will return an array of names rather than an object.'
+   process {
+      $Uri = "$RestUrl/applications"
+      $QueryParams = @()
       
-      if ($Filter -or $Offset -or $Limit) {
-         Write-Warning 'Visibility should not be used with other arguments (Filter, Offset, or Limit). Visibility will take precedence.'
+      if ($Tree.IsPresent) {
+         $Uri += '/actions/tree'
       }
-   }
-
-   # Decipher which authentication type is being used
-   [hashtable]$htbAuthentication = @{}
-   if ($Credential) {
-      $htbAuthentication.Add('Credential', $Credential)
-      Write-Verbose 'Using provided credentials.'
-   }
-   elseif ($WebSession) {
-      $htbAuthentication.Add('WebSession', $WebSession)
-      Write-Verbose 'Using provided Web Session variable.'
-   }
-   else {
-      [pscredential]$Credential = Get-Credential -Message 'Please enter your Essbase password' -UserName $Username
-      $htbAuthentication.Add('Credential', $Credential)
-      Write-Verbose 'Using provided username and password.'
-   }
-   
-   # Create the URI to be used
-   $URI = "$RestURL/applications"
-   $ApplicationResults = $null
-   if ($Application) {
-      $URI += "/$Application"
-      Write-Verbose "Getting application details..."
-   }
-   elseif ($Visibility) {
-      $URI += "/actions/name/$($Visibility)"
-      Write-Verbose "Getting a list of application names..."
-   }
-   else {
-      Write-Verbose "Getting application details..."
-      $URI += '?'
+      elseif ($Visibility) {
+         $Uri += "/actions/name/$Visibility"
+      }
+      elseif ($Name) {
+         $Uri += "/$Name"
+      }
+      else {
+         if ($Filter) {$QueryParams += "filter=$([System.Web.HttpUtility]::UrlEncode($Filter))"}
+         if ($Offset) {$QueryParams += "offset=$Offset"}
+         if ($Limit) {$QueryParams += "limit=$Limit"}
+         
+         if ($QueryParams) {
+            $Uri += "?$($QueryParams -join '&')"
+         }
+      }
       
-      if ($Filter) {
-         $URI += '&filter=' + $Filter
-      }
-      if ($Offset) {
-         $URI += '&offset=' + $Offset
-      }
-      if ($Limit) {
-         $URI += '&limit=' +$Limit
-      }
-   }
-   
-   [hashtable]$htbInvokeParameters = @{
-      Method = 'Get'
-      Uri = $URI
-      Headers = @{
-         accept = 'Application/JSON'
-      }
-   } + $htbAuthentication
-   
-   try {
-      Write-Verbose "URI: $($URI)."
-      $ApplicationResults = Invoke-RestMethod @htbInvokeParameters
+      Write-Verbose "Retrieving applications from: $Uri"
       
-      # If an application is not specified, the results are returned inside an object named "items".
-      # To maintain consistancy, we'll only store the contents of this object.
-      if (-not ($Application) -and -not($Visibility)) {
-         [object]$ApplicationResults = $ApplicationResults.items
+      $Response = Invoke-EssbaseRequest -Method Get -Uri $Uri @AuthParams
+      
+      $FormattedResponse = if ($null -ne $Response.items) {
+         $Items = @($Response.items)
+         
+         if ($Tree.IsPresent) {
+            $Items | ForEach-Object {
+               [PSCustomObject]@{
+                  Name      = $_.name
+                  Databases = $_.databases.name
+               }
+            }
+         }
+         else {
+            $HasRole = ($Items | Where-Object {$_.PSObject.Properties.Name -contains 'role'}).Count -gt 0
+            if ($HasRole -and -not ($SelectProperties.Name -contains 'Role')) {
+               $SelectProperties += @{Name = 'Role'; Expression = {$_.role}}
+            }
+            
+            $Items | Select-Object -Property $SelectProperties
+         }
       }
+      elseif ($null -ne $Response.name) {
+         $Response | Select-Object -Property $SelectProperties
+      }
+      else {
+         $Response
+      }
+      
+      return $FormattedResponse
    }
-   catch {
-      Write-Error "Failed to get applications. $($_)"
-   }
-   
-   return $ApplicationResults
 }

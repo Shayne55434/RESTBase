@@ -1,41 +1,58 @@
-<#
-   .SYNOPSIS
-      Get Job Details.
-   .DESCRIPTION
-      Get details of specified job ID(s).
-   .PARAMETER RestURL <string>
-      The base URL for the REST API interface. Example: 'https://your.domain.com/essbase/rest/v1'
-   .PARAMETER JobID <string[]>
-      String Array of Job ID(s). Accepts value from Pipeline.
-   .PARAMETER WebSession <WebRequestSession>
-      A Web Request Session that contains authentication and header information for the connection.
-   .PARAMETER Credential <pscredential>
-      PowerShell credentials that contain authentication information for the connection.
-   .INPUTS
-      System.String[]
-   .OUTPUTS
-      System.Object
-   .EXAMPLE
-      Get-EssbaseJob -RestURL 'https://your.domain.com/essbase/rest/v1' -JobID '20', '21' -WebSession $MyWebsession
-   .EXAMPLE
-      Get-EssbaseJob -RestURL 'https://your.domain.com/essbase/rest/v1' -Username 'Myuser@somewhere.com' -Limit 5
-   .EXAMPLE
-      '20', '21' | Get-EssbaseJob -RestURL 'https://your.domain.com/essbase/rest/v1' -Credential $MyCredentials
-   .NOTES
-      Created by : Shayne Scovill
-   .LINK
-      https://github.com/Shayne55434/RESTBase
-#>
 function Get-EssbaseJob {
+   <#
+      .SYNOPSIS
+         Get Essbase job details.
+      .DESCRIPTION
+         Retrieves job information from Essbase, optionally filtered by job ID, keyword, or other criteria.
+      .PARAMETER RestUrl
+         The base URL for the REST API (e.g., 'https://your.domain.com/essbase/rest/v1').
+      .PARAMETER JobId
+         Specific job ID(s) to retrieve. Supports pipeline input.
+      .PARAMETER Filter
+         Keyword filter for job search.
+      .PARAMETER OrderBy
+         Field to order results by (e.g., 'job_ID').
+      .PARAMETER Asc
+         Sort results in ascending order. Default is descending.
+      .PARAMETER Offset
+         Number of results to skip (for pagination).
+      .PARAMETER Limit
+         Maximum number of results to return.
+      .PARAMETER SystemJobs
+         Include system jobs in results.
+      .PARAMETER Credential
+         PowerShell credential object for authentication.
+      .PARAMETER AuthToken
+         Bearer token for authentication.
+      .PARAMETER WebSession
+         Existing web session for authentication.
+      .PARAMETER Username
+         Username for interactive credential prompt.
+      .INPUTS
+         System.String
+      .OUTPUTS
+         System.Object
+      .EXAMPLE
+         Get-EssbaseJob -RestUrl 'https://your.domain.com/essbase/rest/v1' -JobId '20', '21' -WebSession $Session
+      .EXAMPLE
+         Get-EssbaseJob -RestUrl 'https://your.domain.com/essbase/rest/v1' -Limit 5 -OrderBy 'job_ID' -Asc -Credential $Cred
+      .EXAMPLE
+         '20', '21' | Get-EssbaseJob -RestUrl 'https://your.domain.com/essbase/rest/v1' -AuthToken $Token
+      .NOTES
+         Created by: Shayne Scovill
+      .LINK
+         https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-jobs-get.html
+   #>
+   
    [CmdletBinding()]
-   Param(
-      [Parameter(Mandatory, Position=0)]
+   param(
+      [Parameter(Mandatory, Position = 0)]
       [ValidateNotNullOrEmpty()]
-      [string]$RestURL,
+      [string]$RestUrl,
       
       [Parameter(ValueFromPipeline)]
       [ValidateNotNullOrEmpty()]
-      [string[]]$JobID,
+      [string[]]$JobId,
       
       [Parameter()]
       [ValidateNotNullOrEmpty()]
@@ -46,7 +63,6 @@ function Get-EssbaseJob {
       [string]$OrderBy,
       
       [Parameter()]
-      [ValidateNotNullOrEmpty()]
       [switch]$Asc,
       
       [Parameter()]
@@ -58,106 +74,76 @@ function Get-EssbaseJob {
       [int]$Limit,
       
       [Parameter()]
-      [ValidateNotNullOrEmpty()]
       [switch]$SystemJobs,
       
-      [Parameter(Mandatory, ParameterSetName='WebSession')]
-      [ValidateNotNullOrEmpty()]
-      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
-      
-      [Parameter(Mandatory, ParameterSetName='Credential')]
+      [Parameter(Mandatory, ParameterSetName = 'Credential')]
       [ValidateNotNullOrEmpty()]
       [pscredential]$Credential,
       
-      [Parameter(Mandatory, ParameterSetName='Username')]
+      [Parameter(Mandatory, ParameterSetName = 'AuthToken')]
+      [ValidateNotNullOrEmpty()]
+      [string]$AuthToken,
+      
+      [Parameter(Mandatory, ParameterSetName = 'WebSession')]
+      [ValidateNotNullOrEmpty()]
+      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+      
+      [Parameter(Mandatory, ParameterSetName = 'Username')]
       [ValidateNotNullOrEmpty()]
       [string]$Username
    )
    
    begin {
-      # Decipher which authentication type is being used
-      [hashtable]$htbAuthentication = @{}
-      if ($Credential) {
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided credentials.'
-      }
-      elseif ($WebSession) {
-         $htbAuthentication.Add('WebSession', $WebSession)
-         Write-Verbose 'Using provided Web Session variable.'
-      }
-      else {
-         [pscredential]$Credential = Get-Credential -Message 'Please enter your Essbase password' -UserName $Username
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided username and password.'
-      }
-      [array]$Results = @()
+      $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
+      $Results = @()
       
-      # Create the URI to be used
-      $URI = "$RestURL/jobs/<jobid>?"
-      
-      if ($Filter) {
-         $URI += '&keyword=' + $Filter
+      # Build query parameters
+      $QueryParams = @()
+      if ($Filter) {$QueryParams += "keyword=$([System.Web.HttpUtility]::UrlEncode($Filter))"}
+      if ($OrderBy) {
+         $SortDirection = if ($Asc.IsPresent) {'asc'} else {'desc'}
+         $QueryParams += "orderBy=$([System.Web.HttpUtility]::UrlEncode($OrderBy)):$SortDirection"
       }
-      if ($OrderBy -or $Asc.IsPresent) {
-         if (-not($OrderBy)) {
-            $OrderBy = 'job_ID'
-         }
-         $URI += '&orderBy=' + $OrderBy
-         
-         if ($Asc.IsPresent) {
-            $URI += ':asc'
-         }
-         else {
-            $URI += ':desc'
-         }
-      }
-      if ($Offset) {
-         $URI += '&offset=' + $Offset
-      }
-      if ($Limit) {
-         $URI += '&limit=' +$Limit
-      }
-      if ($SystemJobs.IsPresent) {
-         $URI += '&systemjobs=true'
-      }
+      if ($Offset) {$QueryParams += "offset=$Offset"}
+      if ($Limit) {$QueryParams += "limit=$Limit"}
+      if ($SystemJobs.IsPresent) {$QueryParams += "systemjobs=true"}
    }
    process {
-      if ($JobID) {
-         foreach ($job in $JobID) {
-            [hashtable]$htbInvokeParameters = @{
-               Method = 'Get'
-               Uri = $URI.Replace('<jobid>', $job)
-               Headers = @{
-                  accept = 'Application/JSON'
-               }
-            } + $htbAuthentication
+      if ($JobId) {
+         foreach ($Job in $JobId) {
+            $Uri = "$RestUrl/jobs/$Job"
+            if ($QueryParams) {
+               $Uri += "?$($QueryParams -join '&')"
+            }
             
-            try{
-               Write-Debug "Uri: $($htbInvokeParameters.Uri)"
-               Write-Verbose 'Getting details for job $job.'
-               $Results += Invoke-RestMethod @htbInvokeParameters
+            try {
+               Write-Verbose "Retrieving job details for: $Job"
+               $Results += Invoke-EssbaseRequest -Method Get -Uri $Uri @AuthParams
             }
             catch {
-               Write-Error "Failed to get job details. $($_)"
+               Write-Error "Failed to get job details for '$Job': $_"
             }
          }
       }
       else {
-         [hashtable]$htbInvokeParameters = @{
-            Method = 'Get'
-            Uri = $URI.Replace('<jobid>', '')
-            Headers = @{
-               accept = 'Application/JSON'
-            }
-         } + $htbAuthentication
+         $Uri = "$RestUrl/jobs"
+         if ($QueryParams) {
+            $Uri += "?$($QueryParams -join '&')"
+         }
          
-         try{
-            Write-Debug "Uri: $($htbInvokeParameters.Uri)"
-            Write-Verbose 'Getting jobs.'
-            $Results = (Invoke-RestMethod @htbInvokeParameters).items
+         try {
+            Write-Verbose "Retrieving job list from: $Uri"
+            $Response = Invoke-EssbaseRequest -Method Get -Uri $Uri @AuthParams
+            
+            if ($Response.items) {
+               $Results = $Response.items
+            }
+            else {
+               $Results = $Response
+            }
          }
          catch {
-            Write-Error "Failed to get jobs. $($_)"
+            Write-Error "Failed to get jobs: $_"
          }
       }
    }

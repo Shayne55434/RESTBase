@@ -1,41 +1,44 @@
-<#
-   .SYNOPSIS
-      Creates a copy of an existing application.
-   .DESCRIPTION
-      Creates a copy of an existing application. If the application already exists, 'DeleteExisting' must be used or the copy will fail.
-   .PARAMETER RestURL <string>
-      The base URL for the REST API interface. Example: 'https://your.domain.com/essbase/rest/v1'
-   .PARAMETER Source <string>
-      String value of the Application name to be copied.
-   .PARAMETER Destination <string>
-      Array String value of the Application name to be (re)created. Accepts value(s) from Pipeline.
-   .PARAMETER DeleteExisting <switch>
-      If used, the Destination Application will be forcefully deleted before being copied from the Source Application.
-   .PARAMETER WebSession <WebRequestSession>
-      A Web Request Session that contains authentication and header information for the connection.
-   .PARAMETER Credential <pscredential>
-      PowerShell credentials that contain authentication information for the connection.
-   .PARAMETER Username <string>
-      If used, you will be prompted to enter your password.
-   .INPUTS
-      System.String[]
-   .OUTPUTS
-      None
-   .EXAMPLE
-      Copy-EssbaseApplication -RestURL 'https://your.domain.com/essbase/rest/v1' -Source 'MyApplication' -Destination 'CopyOfMyApplication' -WebSession $MyWebSession [-DeleteExisting]
-   .EXAMPLE
-      'CopyOfMyApplication', 'AnotherCopyOfMyApplication' | Copy-EssbaseApplication -RestURL 'https://your.domain.com/essbase/rest/v1' -Source 'MyApplication' -Credential $MyCredentials [-DeleteExisting]
-   .NOTES
-      Created by : Shayne Scovill
-   .LINK
-      https://github.com/Shayne55434/RESTBase
-#>
 function Copy-EssbaseApplication {
+   <#
+      .SYNOPSIS
+         Copy an Essbase application.
+      .DESCRIPTION
+         Creates a copy of an existing Essbase application. Optionally deletes the destination application first if it exists.
+      .PARAMETER RestUrl
+         The base URL for the REST API (e.g., 'https://your.domain.com/essbase/rest/v1').
+      .PARAMETER Source
+         Source application name to copy from.
+      .PARAMETER Destination
+         Destination application name(s) to create. Supports pipeline input.
+      .PARAMETER DeleteExisting
+         Delete destination application(s) before copying if they exist.
+      .PARAMETER Credential
+         PowerShell credential object for authentication.
+      .PARAMETER AuthToken
+         Bearer token for authentication.
+      .PARAMETER WebSession
+         Existing web session for authentication.
+      .PARAMETER Username
+         Username for interactive credential prompt.
+      .INPUTS
+         System.String
+      .OUTPUTS
+         None
+      .EXAMPLE
+         Copy-EssbaseApplication -RestUrl 'https://your.domain.com/essbase/rest/v1' -Source 'MyApp' -Destination 'MyAppCopy' -WebSession $Session
+      .EXAMPLE
+         'Copy1', 'Copy2' | Copy-EssbaseApplication -RestUrl 'https://your.domain.com/essbase/rest/v1' -Source 'MyApp' -Credential $Cred -DeleteExisting
+      .NOTES
+         Created by: Shayne Scovill
+      .LINK
+         https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-applications-actions-copy-post.html
+   #>
+   
    [CmdletBinding()]
    param(
-      [Parameter(Mandatory, Position=0)]
+      [Parameter(Mandatory, Position = 0)]
       [ValidateNotNullOrEmpty()]
-      [string]$RestURL,
+      [string]$RestUrl,
       
       [Parameter(Mandatory)]
       [ValidateNotNullOrEmpty()]
@@ -45,70 +48,54 @@ function Copy-EssbaseApplication {
       [ValidateNotNullOrEmpty()]
       [string[]]$Destination,
       
-      [Parameter(HelpMessage='If used, the Destination Application will be forcefully deleted before being copied from the Source Application.')]
+      [Parameter()]
       [switch]$DeleteExisting,
       
-      [Parameter(Mandatory, ParameterSetName='WebSession')]
-      [ValidateNotNullOrEmpty()]
-      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
-      
-      [Parameter(Mandatory, ParameterSetName='Credential')]
+      [Parameter(Mandatory, ParameterSetName = 'Credential')]
       [ValidateNotNullOrEmpty()]
       [pscredential]$Credential,
       
-      [Parameter(Mandatory, ParameterSetName='Username')]
+      [Parameter(Mandatory, ParameterSetName = 'AuthToken')]
+      [ValidateNotNullOrEmpty()]
+      [string]$AuthToken,
+      
+      [Parameter(Mandatory, ParameterSetName = 'WebSession')]
+      [ValidateNotNullOrEmpty()]
+      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+      
+      [Parameter(Mandatory, ParameterSetName = 'Username')]
       [ValidateNotNullOrEmpty()]
       [string]$Username
    )
    
    begin {
-      # Decipher which authentication type is being used
-      [hashtable]$htbAuthentication = @{}
-      if ($Credential) {
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided credentials.'
-      }
-      elseif ($WebSession) {
-         $htbAuthentication.Add('WebSession', $WebSession)
-         Write-Verbose 'Using provided Web Session variable.'
-      }
-      else {
-         [pscredential]$Credential = Get-Credential -Message 'Please enter your Essbase password' -UserName $Username
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided username and password.'
-      }
+      $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
    }
    process {
-      foreach ($strDestination in $Destination){
+      foreach ($DestinationName in $Destination) {
          if ($DeleteExisting.IsPresent) {
             try {
-               Write-Verbose "Deleting application '$strDestination'."
-               $null = Remove-EssbaseApplication -RestURL $RestURL @htbAuthentication -Name $strDestination -Force -Confirm
+               Write-Verbose "Deleting existing application: $DestinationName"
+               $null = Remove-EssbaseApplication -RestUrl $RestUrl @AuthParams -Name $DestinationName -Force -Confirm:$false
             }
             catch {
-               Write-Error "Unable to delete $strDestination. $($_)"
+               Write-Warning "Could not delete existing application '$DestinationName': $_"
             }
          }
          
-         [hashtable]$htbInvokeParameters = @{
-            Method = 'Post'
-            Uri = "$RestURL/applications/actions/copy"
-            Body = @{
-               from = $Source
-               to = $strDestination
-            } | ConvertTo-Json
-            Headers = @{
-               accept = 'Application/JSON'
-            }
-            ContentType = 'Application/JSON'
-         } + $htbAuthentication
+         $Uri = "$RestUrl/applications/actions/copy"
+         $Body = @{
+            from = $Source
+            to   = $DestinationName
+         }
          
          try {
-            Write-Verbose "Copying '$Source' to '$strDestination'."
-            $null = Invoke-RestMethod @htbInvokeParameters
+            Write-Verbose "Copying application '$Source' to '$DestinationName'"
+            $null = Invoke-EssbaseRequest -Method Post -Uri $Uri -Body $Body @AuthParams
+            Write-Information "Application copied: $Source -> $DestinationName"
          }
          catch {
-            Write-Error $($_)
+            Write-Error "Failed to copy application '$Source' to '$DestinationName': $_"
          }
       }
    }

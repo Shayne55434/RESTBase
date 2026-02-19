@@ -1,40 +1,50 @@
-<#
-   .SYNOPSIS
-      Gets the results from an Essbase report.
-   .DESCRIPTION
-      Executes an existing report on the Essbase server and returns the results.
-   .PARAMETER RestURL <string>
-      The base URL for the REST API interface. Example: 'https://your.domain.com/essbase/rest/v1'
-   .PARAMETER Application <string>
-      String value of the Application name that contains the report.
-   .PARAMETER Database <string>
-      String value of the Database name that contains the report.
-   .PARAMETER ReportName <string>
-      String value of the name of the report to be executed san the file extension.
-   .PARAMETER WebSession <WebRequestSession>
-      A Web Request Session that contains authentication and header information for the connection.
-   .PARAMETER Credential <pscredential>
-      PowerShell credential that contain authentication information for the connection.
-   .INPUTS
-      System.String[]
-   .OUTPUTS
-      None
-   .EXAMPLE
-      Copy-EssbaseApplication -RestURL 'https://your.domain.com/essbase/rest/v1' -SourceApplication 'MyApplication' -DestinationApplication 'CopyOfMyApplication' -WebSession $MyWebSession [-DeleteExisting]
-   .EXAMPLE
-      'CopyOfMyApplication', 'AnotherCopyOfMyApplication' | Copy-EssbaseApplication -RestURL 'https://your.domain.com/essbase/rest/v1' -SourceApplication 'MyApplication' -Credential $MyCredentials [-DeleteExisting]
-   .NOTES
-      Created by : Shayne Scovill
-   .LINK
-      https://github.com/Shayne55434/RESTBase
-#>
-
 function Get-EssbaseReport {
+   <#
+      .SYNOPSIS
+         Execute an Essbase report and retrieve results.
+      .DESCRIPTION
+         Executes an existing report on the Essbase server and returns the results. Can save to file or return as object.
+      .PARAMETER RestUrl
+         The base URL for the REST API (e.g., 'https://your.domain.com/essbase/rest/v1').
+      .PARAMETER Application
+         Application name containing the report.
+      .PARAMETER Database
+         Database name containing the report.
+      .PARAMETER ReportName
+         Report name(s) to execute (without .rep extension). Supports pipeline input.
+      .PARAMETER LockForUpdate
+         Lock database for update during report execution.
+      .PARAMETER OutFile
+         File path to save report results.
+      .PARAMETER PassThru
+         Return report content even when saving to file.
+      .PARAMETER Credential
+         PowerShell credential object for authentication.
+      .PARAMETER AuthToken
+         Bearer token for authentication.
+      .PARAMETER WebSession
+         Existing web session for authentication.
+      .PARAMETER Username
+         Username for interactive credential prompt.
+      .INPUTS
+         System.String
+      .OUTPUTS
+         System.Object
+      .EXAMPLE
+         Get-EssbaseReport -RestUrl 'https://your.domain.com/essbase/rest/v1' -Application 'MyApp' -Database 'MyDB' -ReportName 'Budget' -WebSession $Session
+      .EXAMPLE
+         Get-EssbaseReport -RestUrl 'https://your.domain.com/essbase/rest/v1' -Application 'MyApp' -Database 'MyDB' -ReportName 'Sales' -OutFile 'C:\report.txt' -PassThru -Credential $Cred
+      .NOTES
+         Created by: Shayne Scovill
+      .LINK
+         https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-applications-application-databases-database-executereport-get.html
+   #>
+   
    [CmdletBinding()]
    param(
-      [Parameter(Mandatory, Position=0)]
+      [Parameter(Mandatory, Position = 0)]
       [ValidateNotNullOrEmpty()]
-      [string]$RestURL,
+      [string]$RestUrl,
       
       [Parameter(Mandatory)]
       [ValidateNotNullOrEmpty()]
@@ -49,7 +59,6 @@ function Get-EssbaseReport {
       [string[]]$ReportName,
       
       [Parameter()]
-      [ValidateNotNullOrEmpty()]
       [switch]$LockForUpdate,
       
       [Parameter()]
@@ -60,67 +69,53 @@ function Get-EssbaseReport {
       [ValidateScript({$null -ne $OutFile -and $OutFile -ne ''})]
       [switch]$PassThru,
       
-      [Parameter(Mandatory, ParameterSetName='WebSession')]
-      [ValidateNotNullOrEmpty()]
-      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
-      
-      [Parameter(Mandatory, ParameterSetName='Credential')]
+      [Parameter(Mandatory, ParameterSetName = 'Credential')]
       [ValidateNotNullOrEmpty()]
       [pscredential]$Credential,
       
-      [Parameter(Mandatory, ParameterSetName='Username')]
+      [Parameter(Mandatory, ParameterSetName = 'AuthToken')]
+      [ValidateNotNullOrEmpty()]
+      [string]$AuthToken,
+      
+      [Parameter(Mandatory, ParameterSetName = 'WebSession')]
+      [ValidateNotNullOrEmpty()]
+      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+      
+      [Parameter(Mandatory, ParameterSetName = 'Username')]
       [ValidateNotNullOrEmpty()]
       [string]$Username
    )
    
    begin {
-      # Decipher which authentication type is being used
-      [hashtable]$htbAuthentication = @{}
-      if ($Credential) {
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided credentials.'
-      }
-      elseif ($WebSession) {
-         $htbAuthentication.Add('WebSession', $WebSession)
-         Write-Verbose 'Using provided Web Session variable.'
-      }
-      else {
-         [pscredential]$Credential = Get-Credential -Message 'Please enter your Essbase password' -UserName $Username
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided username and password.'
-      }
+      $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
    }
    process {
       foreach ($Report in $ReportName) {
-         # Since the REST API cannot have any file extensions, let's make sure to remove any
-         # While this is not 100% safe, it's simple and should be fine
-         $Report = $Report.Replace('.rep', '')
-         [hashtable]$htbInvokeParameters = @{
-            Method = 'Get'
-            Uri = "$RestURL/applications/$($Application)/databases/$($Database)/executeReport?filename=$($Report)&lockForUpdate=$($LockForUpdate.IsPresent)"
-            Headers = @{
-               accept = 'Application/Octet-Stream'
+         # Remove .rep extension if present
+         $Report = $Report.TrimEnd('.rep')
+         # $Report = [System.IO.Path]::GetFileNameWithoutExtension($Report)
+         
+         $Uri = "$RestUrl/applications/$Application/databases/$Database/executeReport?filename=$([System.Web.HttpUtility]::UrlEncode($Report))&lockForUpdate=$($LockForUpdate.IsPresent)"
+         
+         try {
+            Write-Verbose "Executing report: $Report"
+            
+            if ($OutFile) {
+               Write-Verbose "Saving report results to: $OutFile"
+               $Results = Invoke-EssbaseRequest -Method Get -Uri $Uri -OutFile $OutFile @AuthParams
+               
+               if ($PassThru.IsPresent) {
+                  return (Get-Content -Path $OutFile -Raw)
+               }
             }
-         } + $htbAuthentication
-         
-         if ($null -ne $OutFile -and $OutFile -ne '') {
-            Write-Verbose "Results will be saved to '$OutFile'."
-            $htbInvokeParameters.Add('OutFile', $OutFile)
-         }
-         if ($PassThru.IsPresent) {
-            Write-Verbose "PassThru is enabled."
-            $htbInvokeParameters.Add('PassThru', $true)
-         }
-         
-         try{
-            Write-Verbose "Executing report '$ReportName'."
-            [object]$Results = Invoke-RestMethod @htbInvokeParameters
+            else {
+               $Results = Invoke-EssbaseRequest -Method Get -Uri $Uri @AuthParams
+               return $Results
+            }
          }
          catch {
-            Write-Error "Failed to execute the report. $($_)"
+            Write-Error "Failed to execute report '$Report': $_"
          }
-         
-         return $Results
       }
    }
 }

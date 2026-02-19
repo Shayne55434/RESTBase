@@ -1,39 +1,44 @@
-<#
-   .SYNOPSIS
-      Get database information for specified Application/Database
-   .DESCRIPTION
-      Get database information for specified Application/Database
-   .PARAMETER RestURL <string>
-      The base URL for the REST API interface. Example: 'https://your.domain.com/essbase/rest/v1'
-   .PARAMETER Application <string[]>
-      String Array value of the Application name for which to get a list of databases. Accepts value from Pipeline.
-   .PARAMETER Database <string>
-      String value of the Database name for which to get information.
-   .PARAMETER WebSession <WebRequestSession>
-      A Web Request Session that contains authentication and header information for the connection.
-   .PARAMETER Credentials <pscredential>
-      PowerShell credentials that contain authentication information for the connection.
-   .INPUTS
-      System.String[]
-   .OUTPUTS
-      System.Object
-   .EXAMPLE
-      Get-EssbaseDatabase -RestURL 'https://your.domain.com/essbase/rest/v1' -Application 'Test1' -WebSession $MyWebSession
-   .EXAMPLE
-      'Test1', 'Test2' | Get-EssbaseDatabase -RestURL 'https://your.domain.com/essbase/rest/v1' -Credential $MyCredentials
-   .EXAMPLE
-      Get-EssbaseDatabase -RestURL 'https://your.domain.com/essbase/rest/v1' -Application @('Test1','Test2') -Database 'myDB' -Username 'MyUsername'
-   .NOTES
-      Created by : Shayne Scovill
-   .LINK
-      https://github.com/Shayne55434/RESTBase
-#>
 function Get-EssbaseDatabase {
+   <#
+      .SYNOPSIS
+         Get Essbase database information.
+      .DESCRIPTION
+         Retrieves database information from one or more Essbase applications. Can return all databases in an application or specific database details.
+      .PARAMETER RestUrl
+         The base URL for the REST API (e.g., 'https://your.domain.com/essbase/rest/v1').
+      .PARAMETER Application
+         Application name(s) to query. Supports pipeline input.
+      .PARAMETER Name
+         Specific database name to retrieve details for.
+      .PARAMETER Credential
+         PowerShell credential object for authentication.
+      .PARAMETER AuthToken
+         Bearer token for authentication.
+      .PARAMETER WebSession
+         Existing web session for authentication.
+      .PARAMETER Username
+         Username for interactive credential prompt.
+      .INPUTS
+         System.String
+      .OUTPUTS
+         System.Object
+      .EXAMPLE
+         Get-EssbaseDatabase -RestUrl 'https://your.domain.com/essbase/rest/v1' -Application 'MyApp' -WebSession $Session
+      .EXAMPLE
+         'App1', 'App2' | Get-EssbaseDatabase -RestUrl 'https://your.domain.com/essbase/rest/v1' -Credential $Cred
+      .EXAMPLE
+         Get-EssbaseDatabase -RestUrl 'https://your.domain.com/essbase/rest/v1' -Application 'MyApp' -Name 'MyDB' -AuthToken $Token
+      .NOTES
+         Created by: Shayne Scovill
+      .LINK
+         https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-applications-application-databases-get.html
+   #>
+   
    [CmdletBinding()]
    param(
-      [Parameter(Mandatory, Position=0)]
+      [Parameter(Mandatory, Position = 0)]
       [ValidateNotNullOrEmpty()]
-      [string]$RestURL,
+      [string]$RestUrl,
       
       [Parameter(Mandatory, ValueFromPipeline)]
       [ValidateNotNullOrEmpty()]
@@ -41,70 +46,54 @@ function Get-EssbaseDatabase {
       
       [Parameter()]
       [ValidateNotNullOrEmpty()]
-      [string]$Database,
+      [string]$Name,
       
-      [Parameter(Mandatory, ParameterSetName='WebSession')]
-      [ValidateNotNullOrEmpty()]
-      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
-      
-      [Parameter(Mandatory, ParameterSetName='Credential')]
+      [Parameter(Mandatory, ParameterSetName = 'Credential')]
       [ValidateNotNullOrEmpty()]
       [pscredential]$Credential,
       
-      [Parameter(Mandatory, ParameterSetName='Username')]
+      [Parameter(Mandatory, ParameterSetName = 'AuthToken')]
+      [ValidateNotNullOrEmpty()]
+      [string]$AuthToken,
+      
+      [Parameter(Mandatory, ParameterSetName = 'WebSession')]
+      [ValidateNotNullOrEmpty()]
+      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+      
+      [Parameter(Mandatory, ParameterSetName = 'Username')]
       [ValidateNotNullOrEmpty()]
       [string]$Username
    )
    
    begin {
-      # Decipher which authentication type is being used
-      [hashtable]$htbAuthentication = @{}
-      if ($Credential) {
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided credentials.'
-      }
-      elseif ($WebSession)  {
-         $htbAuthentication.Add('WebSession', $WebSession)
-         Write-Verbose 'Using provided Web Session variable.'
-      }
-      else {
-         [pscredential]$Credential = Get-Credential -Message 'Please enter your Essbase password' -UserName $Username
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided username and password.'
-      }
-      $arrResults = @()
+      $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
+      $Results = @()
    }
    process {
-      foreach ($app in $Application) {
-         $URI = "$RestURL/applications/$($app)/databases/$($Database)"
-         
-         [hashtable]$htbInvokeParameters = @{
-            Method = 'Get'
-            Uri = $URI
-            ContentType = 'Application/JSON'
-            Headers = @{
-               accept = 'Application/JSON'
-            }
-         }  + $htbAuthentication
+      foreach ($AppName in $Application) {
+         $Uri = "$RestUrl/applications/$AppName/databases"
+         if ($Name) {
+            $Uri += "/$Name"
+         }
          
          try {
-            Write-Verbose "Getting databases for '$app'."
-            $results = Invoke-RestMethod @htbInvokeParameters
+            Write-Verbose "Retrieving databases from application: $AppName"
+            $Response = Invoke-EssbaseRequest -Method Get -Uri $Uri @AuthParams
             
-            # If a database is not specified, the results are returned inside an object named "items".
-            # To maintain consistancy, we'll only store the contents of this object.
-            if (-not ($Database)) {
-               $results = $results.items
+            # Extract items array for consistency when listing multiple databases
+            if (-not $Name -and $Response.items) {
+               $Results += $Response.items
             }
-            
-            $arrResults += $results
+            else {
+               $Results += $Response
+            }
          }
          catch {
-            Write-Error $($_)
+            Write-Error "Failed to get databases from application '$AppName': $_"
          }
       }
    }
    end {
-      return $arrResults
+      return $Results
    }
 }

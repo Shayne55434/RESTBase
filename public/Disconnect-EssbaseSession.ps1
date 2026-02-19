@@ -1,85 +1,77 @@
-<#
-   .SYNOPSIS
-      Disconnect a session from Essbase.
-   .DESCRIPTION
-      Disconnect a session from Essbase.
-   .PARAMETER RestURL <string>
-      The base URL for the REST API interface. Example: 'https://your.domain.com/essbase/rest/v1'
-   .PARAMETER WebSession <WebRequestSession>
-      A Web Request Session that contains authentication and header information for the connection.
-   .PARAMETER Credentials <pscredential>
-      PowerShell credentials that contain authentication information for the connection.
-   .INPUTS
-      None
-   .OUTPUTS
-      None
-   .EXAMPLE
-      Disconnect-EssbaseSession -RestURL 'https://your.domain.com/essbase/rest/v1' -WebSession $MyWebSession
-   .EXAMPLE
-      Disconnect-EssbaseSession -RestURL 'https://your.domain.com/essbase/rest/v1' -Credential $MyCredentials
-   .NOTES
-      Created by : Shayne Scovill
-   .LINK
-      https://github.com/Shayne55434/RESTBase
-#>
 function Disconnect-EssbaseSession {
+   <#
+      .SYNOPSIS
+         Disconnect a session from Essbase.
+      .DESCRIPTION
+         Disconnects one or more active Essbase sessions by session ID.
+      .PARAMETER RestUrl
+         The base URL for the REST API (e.g., 'https://your.domain.com/essbase/rest/v1').
+      .PARAMETER SessionId
+         Session ID(s) to disconnect. Supports pipeline input.
+      .PARAMETER Credential
+         PowerShell credential object for authentication.
+      .PARAMETER AuthToken
+         Bearer token for authentication.
+      .PARAMETER WebSession
+         Existing web session for authentication.
+      .PARAMETER Username
+         Username for interactive credential prompt.
+      .INPUTS
+         System.String
+      .OUTPUTS
+         None
+      .EXAMPLE
+         Disconnect-EssbaseSession -RestUrl 'https://your.domain.com/essbase/rest/v1' -SessionId '123456' -WebSession $Session
+      .EXAMPLE
+         '123', '456', '789' | Disconnect-EssbaseSession -RestUrl 'https://your.domain.com/essbase/rest/v1' -Credential $Cred
+      .NOTES
+         Created by: Shayne Scovill
+      .LINK
+         https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-sessions-id-delete.html
+   #>
+   
    [CmdletBinding(SupportsShouldProcess)]
-   Param(
-      [Parameter(Mandatory, Position=0)]
+   param(
+      [Parameter(Mandatory, Position = 0)]
       [ValidateNotNullOrEmpty()]
-      [string]$RestURL,
+      [string]$RestUrl,
       
       [Parameter(Mandatory, ValueFromPipeline)]
       [ValidateNotNullOrEmpty()]
-      [string[]]$SessionID,
+      [string[]]$SessionId,
       
-      [Parameter(Mandatory, ParameterSetName='WebSession')]
-      [ValidateNotNullOrEmpty()]
-      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
-      
-      [Parameter(Mandatory, ParameterSetName='Credential')]
+      [Parameter(Mandatory, ParameterSetName = 'Credential')]
       [ValidateNotNullOrEmpty()]
       [pscredential]$Credential,
       
-      [Parameter(Mandatory, ParameterSetName='Username')]
+      [Parameter(Mandatory, ParameterSetName = 'AuthToken')]
+      [ValidateNotNullOrEmpty()]
+      [string]$AuthToken,
+      
+      [Parameter(Mandatory, ParameterSetName = 'WebSession')]
+      [ValidateNotNullOrEmpty()]
+      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+      
+      [Parameter(Mandatory, ParameterSetName = 'Username')]
       [ValidateNotNullOrEmpty()]
       [string]$Username
    )
    
    begin {
-      # Decipher which authentication type is being used
-      [hashtable]$htbAuthentication = @{}
-      if ($Credential) {
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided credentials.'
-      }
-      elseif ($WebSession) {
-         $htbAuthentication.Add('WebSession', $WebSession)
-         Write-Verbose 'Using provided Web Session variable.'
-      }
-      else {
-         [pscredential]$Credential = Get-Credential -Message 'Please enter your Essbase password' -UserName $Username
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided username and password.'
-      }
+      $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
    }
    process {
-      foreach ($ID in $SessionID) {
-         [hashtable]$htbInvokeParameters = @{
-            Method = 'Delete'
-            Uri = "$RestURL/sessions/$($ID)?disconnect=true"
-            Headers = @{
-               accept = 'Application/JSON'
-            }
-         } + $htbAuthentication
+      foreach ($Id in $SessionId) {
+         $Uri = "$RestUrl/sessions/$Id`?disconnect=true"
          
-         if ($PSCmdlet.ShouldProcess("$ID" , "Disconnect session")) {
+         if ($PSCmdlet.ShouldProcess("Session ID: $Id", "Disconnect Essbase session")) {
             try {
-               Write-Verbose "Disconnecting from Essbase."
-               $null = Invoke-RestMethod @htbInvokeParameters -DisableKeepAlive
+               Write-Verbose "Disconnecting session: $Id"
+               $null = Invoke-EssbaseRequest -Method Delete -Uri $Uri @AuthParams
+               Write-Information "Session '$Id' disconnected successfully."
             }
             catch {
-               Write-Error "Failed to disconnect from Essbase. $($_)"
+               Write-Error "Failed to disconnect session '$Id': $_"
             }
          }
       }

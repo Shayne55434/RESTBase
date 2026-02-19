@@ -1,94 +1,78 @@
-<#
-   .SYNOPSIS
-      Delete file from Essbase.
-   .DESCRIPTION
-      Delete file from Essbase.
-   .PARAMETER RestURL <string>
-      The base URL for the REST API interface. Example: 'https://your.domain.com/essbase/rest/v1'
-   .PARAMETER Application <string>
-      The name of the Application where the File to be deleted exists.
-   .PARAMETER Database <string>
-      The name of the Database where the File to be deleted exists.
-   .PARAMETER FullPath <string>
-      The name of the File to be deleted.
-   .PARAMETER WebSession <WebRequestSession>
-      A Web Request Session that contains authentication and header information for the connection.
-   .PARAMETER Credentials <pscredential>
-      PowerShell credentials that contain authentication information for the connection.
-   .INPUTS
-      System.String[]
-   .OUTPUTS
-      None
-   .EXAMPLE
-      Remove-EssbaseDatabase -RestURL 'https://your.domain.com/essbase/rest/v1' -FullPath '/applications/MyCube/MyDB/MyFile.txt' -WebSession $MyWebSession
-   .EXAMPLE
-      '/applications/MyCube/MyDB/MyFile.txt', '/applications/MyCube/MyDB/MyOtherFile.txt' | Remove-EssbaseDatabase -RestURL 'https://your.domain.com/essbase/rest/v1'-Credential $MyCredentials -Confirm
-   .EXAMPLE
-      Get-EssbaseFile -RestURL 'https://your.domain.com/essbase/rest/v1' -Username 'shayne.scovill@olddutchfoods.com' -Path '/applications/MyCube/MyDB' -Filter 'err_'  | Remove-EssbaseDatabase -RestURL 'https://your.domain.com/essbase/rest/v1'-Credential $MyCredentials -Confirm
-   .NOTES
-      Created by : Shayne Scovill
-   .LINK
-      https://github.com/Shayne55434/RESTBase
-#>
 function Remove-EssbaseFile {
+   <#
+      .SYNOPSIS
+         Delete files from Essbase file system.
+      .DESCRIPTION
+         Deletes one or more files from the Essbase file system.
+      .PARAMETER RestUrl
+         The base URL for the REST API (e.g., 'https://your.domain.com/essbase/rest/v1').
+      .PARAMETER FullPath
+         Full file path(s) to delete. Supports pipeline input. Example: '/applications/MyApp/MyDB/file.txt'
+      .PARAMETER Credential
+         PowerShell credential object for authentication.
+      .PARAMETER AuthToken
+         Bearer token for authentication.
+      .PARAMETER WebSession
+         Existing web session for authentication.
+      .PARAMETER Username
+         Username for interactive credential prompt.
+      .INPUTS
+         System.String
+      .OUTPUTS
+         None
+      .EXAMPLE
+         Remove-EssbaseFile -RestUrl 'https://your.domain.com/essbase/rest/v1' -FullPath '/applications/MyApp/MyDB/file.txt' -WebSession $Session -Confirm
+      .EXAMPLE
+         Get-EssbaseFile -RestUrl 'https://your.domain.com/essbase/rest/v1' -Path '/applications/App/DB' -Filter 'err_' | Remove-EssbaseFile -RestUrl 'https://your.domain.com/essbase/rest/v1' -Credential $Cred
+      .NOTES
+         Created by: Shayne Scovill
+      .LINK
+         https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-files-path-delete.html
+   #>
    [CmdletBinding(SupportsShouldProcess)]
    param(
-      [Parameter(Mandatory, Position=0)]
+      [Parameter(Mandatory, Position = 0)]
       [ValidateNotNullOrEmpty()]
-      [string]$RestURL,
+      [string]$RestUrl,
       
       [Parameter(Mandatory, ValueFromPipeline, ValueFromPipelineByPropertyName)]
       [ValidateNotNullOrEmpty()]
       [string[]]$FullPath,
       
-      [Parameter(Mandatory, ParameterSetName='WebSession')]
-      [ValidateNotNullOrEmpty()]
-      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
-      
-      [Parameter(Mandatory, ParameterSetName='Credential')]
+      [Parameter(Mandatory, ParameterSetName = 'Credential')]
       [ValidateNotNullOrEmpty()]
       [pscredential]$Credential,
       
-      [Parameter(Mandatory, ParameterSetName='Username')]
+      [Parameter(Mandatory, ParameterSetName = 'AuthToken')]
+      [ValidateNotNullOrEmpty()]
+      [string]$AuthToken,
+      
+      [Parameter(Mandatory, ParameterSetName = 'WebSession')]
+      [ValidateNotNullOrEmpty()]
+      [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+      
+      [Parameter(Mandatory, ParameterSetName = 'Username')]
       [ValidateNotNullOrEmpty()]
       [string]$Username
    )
    
    begin {
-      # Decipher which authentication type is being used
-      [hashtable]$htbAuthentication = @{}
-      if ($Credential) {
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided credentials.'
-      }
-      elseif ($WebSession) {
-         $htbAuthentication.Add('WebSession', $WebSession)
-         Write-Verbose 'Using provided Web Session variable.'
-      }
-      else {
-         [pscredential]$Credential = Get-Credential -Message 'Please enter your Essbase password' -UserName $Username
-         $htbAuthentication.Add('Credential', $Credential)
-         Write-Verbose 'Using provided username and password.'
-      }
+      $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
    }
+   
    process {
-      foreach ($path in $FullPath) {
-         [hashtable]$htbInvokeParameters = @{
-            Method = 'Delete'
-            Uri = "$RestURL/files$($path)"
-            Headers = @{
-               accept = 'Application/JSON'
-            }
-         } + $htbAuthentication
+      foreach ($FilePath in $FullPath) {
+         $Uri = "$RestUrl/files$FilePath"
          
-         try {
-            if ($PSCmdlet.ShouldProcess("$path" , "Remove")) {
-               Write-Verbose "Deleting '$path'."
-               $null = Invoke-RestMethod @htbInvokeParameters
+         if ($PSCmdlet.ShouldProcess("File: $FilePath", "Delete file")) {
+            try {
+               Write-Verbose "Deleting file: $FilePath"
+               $null = Invoke-EssbaseRequest -Method Delete -Uri $Uri @AuthParams
+               Write-Information "File '$FilePath' deleted successfully."
             }
-         }
-         catch {
-            Write-Error "Failed to delete '$path'. $($_)"
+            catch {
+               Write-Error "Failed to delete file '$FilePath': $_"
+            }
          }
       }
    }
