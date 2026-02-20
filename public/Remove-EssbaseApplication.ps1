@@ -31,6 +31,7 @@ function Remove-EssbaseApplication {
       .LINK
          https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-applications-application-delete.html
    #>
+   
    [CmdletBinding(SupportsShouldProcess)]
    param(
       [Parameter(Mandatory, Position = 0)]
@@ -64,7 +65,6 @@ function Remove-EssbaseApplication {
    begin {
       $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
    }
-   
    process {
       foreach ($ApplicationName in $Name) {
          if ($Force.IsPresent) {
@@ -75,7 +75,7 @@ function Remove-EssbaseApplication {
             $Uri = "$RestUrl/applications/$ApplicationName"
          }
          
-         if ($PSCmdlet.ShouldProcess("Application: $ApplicationName", "Permanently delete application")) {
+         if ($PSCmdlet.ShouldProcess("Application: $ApplicationName", 'Permanently delete application')) {
             try {
                Write-Verbose "Deleting application: $ApplicationName"
                $null = Invoke-EssbaseRequest -Method Delete -Uri $Uri @AuthParams

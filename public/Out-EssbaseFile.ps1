@@ -1,3 +1,4 @@
+function Out-EssbaseFile {
    <#
       .SYNOPSIS
          Upload file(s) to Essbase.
@@ -34,25 +35,21 @@
       .LINK
          https://docs.oracle.com/en/database/other-databases/essbase/21/essrt/op-files-applications-application-databases-database-filename-put.html
    #>
-function Out-EssbaseFile {
+   
    [CmdletBinding()]
    param(
       [Parameter(Mandatory, Position = 0)]
       [ValidateNotNullOrEmpty()]
       [string]$RestUrl,
       
-      [Parameter(Mandatory)]
-      [ValidateNotNullOrEmpty()]
-      [string]$Application,
-      
-      [Parameter(Mandatory)]
-      [ValidateNotNullOrEmpty()]
-      [string]$Database,
-      
       [Parameter(Mandatory, ValueFromPipeline)]
       [ValidateNotNullOrEmpty()]
       [ValidateScript({ Test-Path -Path $_ })]
       [string[]]$FilePath,
+      
+      [Parameter(Mandatory)]
+      [ValidateNotNullOrEmpty()]
+      [string]$Destination,
       
       [Parameter(Mandatory, ParameterSetName = 'Credential')]
       [ValidateNotNullOrEmpty()]
@@ -76,16 +73,16 @@ function Out-EssbaseFile {
    
    begin {
       $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
+      $Destination = $Destination.TrimStart('/')
    }
-   
    process {
       foreach ($File in $FilePath) {
          $FileIsReadOnly = $false
-         $FileName = (Get-Item -Path $File).Name
+         $FileName = [System.IO.Path]::GetFileName($File)
          
-         $Uri = "$RestUrl/files/applications/$Application/$Database/$FileName"
+         $Uri = "$RestUrl/files/${Destination}"
          if ($Overwrite.IsPresent) {
-            $Uri += "?overwrite=true"
+            $Uri += '?overwrite=true'
             Write-Verbose "Overwriting '$FileName' if it exists."
          }
          
@@ -98,10 +95,10 @@ function Out-EssbaseFile {
          
          try {
             $null = Invoke-EssbaseRequest -Method Put -Uri $Uri -InFile $File @AuthParams
-            Write-Verbose "Uploaded '$FileName' to $Application/$Database"
+            Write-Verbose "Uploaded '$FileName' to '$Destination' successfully."
          }
          catch {
-            Write-Error "Failed to upload '$File' to '$Application/$Database': $_"
+            Write-Error "Failed to upload '$File' to '$Destination': $_"
          }
          finally {
             # Restore ReadOnly attribute if it was set

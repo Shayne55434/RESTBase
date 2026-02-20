@@ -52,6 +52,7 @@ SOFTWARE.
       'Copy-EssbaseDatabase',
       'Disconnect-EssbaseSession',
       'Get-EssbaseApplication',
+      'Get-EssbaseAuthenticationToken',
       'Get-EssbaseDatabase',
       'Get-EssbaseFile',
       'Get-EssbaseJob',

@@ -89,26 +89,7 @@ function Get-EssbaseApplication {
    
    begin {
       $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
-      $SelectProperties = @(
-         @{Name = 'Name'; Expression = {$_.name}},
-         @{Name = 'Status'; Expression = {$_.status}},
-         @{Name = 'Description'; Expression = {$_.description}},
-         @{Name = 'Type'; Expression = {$_.type}},
-         @{Name = 'Owner'; Expression = {$_.owner}},
-         @{Name = 'ShowVariables'; Expression = {$_.appVariablesSetting.showVariables}},
-         @{Name = 'UpdateVariables'; Expression = {$_.appVariablesSetting.updateVariables}},
-         @{Name = 'ConnectedUsersCount'; Expression = {$_.connectedUsersCount}},
-         @{Name = 'CreationTime'; Expression = {((Get-Date '1970-01-01') + [TimeSpan]::FromMilliseconds($_.creationTime)).ToLocalTime()}},
-         @{Name = 'CreationTimeUtc'; Expression = {((Get-Date '1970-01-01') + [TimeSpan]::FromMilliseconds($_.creationTime))}},
-         @{Name = 'InspectAppAllowed'; Expression = {$_.inspectAppAllowed}},
-         @{Name = 'ModifiedBy'; Expression = {$_.modifiedBy}},
-         @{Name = 'ModifiedTime'; Expression = {((Get-Date '1970-01-01') + [TimeSpan]::FromMilliseconds($_.modifiedTime)).ToLocalTime()}},
-         @{Name = 'ModifiedTimeUtc'; Expression = {((Get-Date '1970-01-01') + [TimeSpan]::FromMilliseconds($_.modifiedTime))}},
-         # @{Name = 'Role'; Expression = {$_.role}}, # Only applicable when retrieving a list of applications, not a single application
-         @{Name = 'StartStopAppAllowed'; Expression = {$_.startStopAppAllowed}},
-         @{Name = 'Links'; Expression = {$_.links | Where-Object {$_.method -eq 'GET'} | Select-Object -ExpandProperty href -Unique -ErrorAction Ignore}}
-      )
-   }
+      }
    process {
       $Uri = "$RestUrl/applications"
       $QueryParams = @()
@@ -148,16 +129,8 @@ function Get-EssbaseApplication {
             }
          }
          else {
-            $HasRole = ($Items | Where-Object {$_.PSObject.Properties.Name -contains 'role'}).Count -gt 0
-            if ($HasRole -and -not ($SelectProperties.Name -contains 'Role')) {
-               $SelectProperties += @{Name = 'Role'; Expression = {$_.role}}
-            }
-            
-            $Items | Select-Object -Property $SelectProperties
+            $Items
          }
-      }
-      elseif ($null -ne $Response.name) {
-         $Response | Select-Object -Property $SelectProperties
       }
       else {
          $Response

@@ -58,11 +58,12 @@ function Remove-EssbaseFile {
    
    begin {
       $AuthParams = Resolve-AuthenticationParameter -Credential $Credential -WebSession $WebSession -Username $Username -AuthToken $AuthToken
+      $FilePath = $FilePath.TrimStart('/')
    }
    
    process {
       foreach ($FilePath in $FullPath) {
-         $Uri = "$RestUrl/files$FilePath"
+         $Uri = "$RestUrl/files/$FilePath"
          
          if ($PSCmdlet.ShouldProcess("File: $FilePath", "Delete file")) {
             try {

@@ -37,6 +37,9 @@ function Invoke-EssbaseRequest {
       [string]$OutFile,
       
       [Parameter()]
+      [string]$InFile,
+      
+      [Parameter()]
       [pscredential]$Credential,
       
       [Parameter()]
@@ -65,6 +68,10 @@ function Invoke-EssbaseRequest {
    
    if ($OutFile) {
       $InvokeParams.OutFile = $OutFile
+   }
+   if ($InFile) {
+      $InvokeParams.InFile = $InFile
+      $InvokeParams.Headers.'Content-Type' = 'application/octet-stream'
    }
    
    if ($Credential) {

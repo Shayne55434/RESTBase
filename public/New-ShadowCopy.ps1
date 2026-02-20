@@ -55,7 +55,10 @@ function New-ShadowCopy {
       [string]$ShadowApplication,
       
       [Parameter(HelpMessage = 'Run as a job.')]
-      [switch]$RunInBackground,
+      [switch]$RunAsEssbaseJob,
+      
+      [Parameter(HelpMessage = 'Do not wait for the job to complete.')]
+      [switch]$NoWait,
       
       [Parameter()]
       [int]$Timeout = 0,
@@ -104,7 +107,7 @@ function New-ShadowCopy {
       shadowAppName                = $ShadowApplication
       hideShadow                   = $HideShadow.IsPresent
       waitForOngoingUpdatesInSecs  = $Timeout
-      runInBackground              = $RunInBackground.IsPresent
+      runInBackground              = $RunAsEssbaseJob.IsPresent
    }
    
    $Uri = "$RestUrl/applications/actions/shadowCopy"
@@ -114,7 +117,7 @@ function New-ShadowCopy {
          Write-Verbose "Creating shadow copy of '$PrimaryApplication' as '$ShadowApplication'"
          $JobResults = Invoke-EssbaseRequest -Method Post -Uri $Uri -Body $Body @AuthParams
          
-         if ($RunInBackground.IsPresent) {
+         if (-not ($NoWait.IsPresent)) {
             $JobId = $JobResults.job_ID
             Write-Verbose "Shadow copy job started: $JobId"
             Write-Host "Shadow copy in progress" -NoNewline

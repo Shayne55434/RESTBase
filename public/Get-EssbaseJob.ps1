@@ -60,6 +60,7 @@ function Get-EssbaseJob {
       
       [Parameter()]
       [ValidateNotNullOrEmpty()]
+      [ValidateSet('job_ID', 'appName', 'dbName', 'jobfileName', 'userName', 'statusCode')]
       [string]$OrderBy,
       
       [Parameter()]
